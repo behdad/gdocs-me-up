@@ -5,30 +5,29 @@
  *   node google-docs-high-fidelity-export.js <DOC_ID> <OUTPUT_DIR>
  *
  * Features:
- *   - Hierarchical TOC indentation (based on heading level)
- *   - Doc-based column width (slightly tweaked)
- *   - Doc-based lineSpacing if present
- *   - Right-to-left paragraphs & bullet lists
- *   - Center, justify, start/end alignment preserved
- *   - Title, Subtitle, Headings from named styles
- *   - Subtitle supports multi-line if SHIFT+ENTER in the doc
- *   - Images with max-size logic (includes transform scale if present)
- *   - Table rendering
+ *   - Doc-based lineSpacing, alignment, direction=RIGHT_TO_LEFT
+ *   - Respects doc's Title, Subtitle, Headings (H1..H6)
+ *   - Table of contents with hierarchical indentation
+ *   - Column width from doc (pageSize minus margins) + small tweak
  *   - Merging consecutive text runs
+ *   - Images with doc-based dimension and transform scale
+ *   - Overriding default browser heading styling so H3 isn't “too big”
  *   - Minimal .htaccess
  *
- * Fixes fetchAsBase64() not defined error.
+ * Fixes:
+ *   - "fetchAsBase64 is not defined"
+ *   - "H3 looks too large" by overriding heading tags in CSS
  */
 
 const fs = require('fs');
 const path = require('path');
 const { google } = require('googleapis');
 
-// ----------------- CONFIG -----------------
+// ----------- CONFIG -----------
 const SERVICE_ACCOUNT_KEY_FILE = 'service_account.json';
-const EMBED_IMAGES_AS_BASE64 = false; // store images in "images/" folder
+const EMBED_IMAGES_AS_BASE64 = false; // store images in a folder
 
-// Basic alignment map for LTR
+// Basic alignment for LTR paragraphs
 const alignmentMapLTR = {
   START: 'left',
   CENTER: 'center',
@@ -36,9 +35,9 @@ const alignmentMapLTR = {
   JUSTIFIED: 'justify'
 };
 
-// -------------------------------------
+// ------------------------------------------
 // MAIN EXPORT
-// -------------------------------------
+// ------------------------------------------
 async function exportDocToHTML(docId, outputDir) {
   fs.mkdirSync(outputDir, { recursive: true });
   const imagesDir = path.join(outputDir, 'images');
@@ -48,54 +47,58 @@ async function exportDocToHTML(docId, outputDir) {
   const authClient = await getAuthClient();
   const docs = google.docs({ version: 'v1', auth: authClient });
   const { data: doc } = await docs.documents.get({ documentId: docId });
-  console.log(`Exporting: ${doc.title}`);
+  console.log(`Exporting doc: ${doc.title}`);
 
-  // Build named styles (Title, Subtitle, headings)
+  // Named styles for Title, Subtitle, Headings, etc.
   const namedStylesMap = buildNamedStylesMap(doc);
 
-  // Determine container width from doc
+  // Determine container width from doc documentStyle
   const colInfo = computeDocContainerWidth(doc);
 
   // Build global CSS
   const globalCSS = generateGlobalCSS(doc, colInfo);
 
   const usedFonts = new Set();
-  let htmlOutput = [];
+  let htmlLines = [];
 
   // Basic HTML skeleton
-  htmlOutput.push('<!DOCTYPE html>');
-  htmlOutput.push('<html lang="en">');
-  htmlOutput.push('<head>');
-  htmlOutput.push('  <meta charset="UTF-8">');
-  htmlOutput.push(`  <title>${escapeHtml(doc.title)}</title>`);
-  htmlOutput.push('  <style>');
-  htmlOutput.push(globalCSS);
-  htmlOutput.push('  </style>');
-  htmlOutput.push('</head>');
-  htmlOutput.push('<body>');
-  htmlOutput.push('<div class="doc-content">');
+  htmlLines.push('<!DOCTYPE html>');
+  htmlLines.push('<html lang="en">');
+  htmlLines.push('<head>');
+  htmlLines.push('  <meta charset="UTF-8">');
+  htmlLines.push(`  <title>${escapeHtml(doc.title)}</title>`);
+  htmlLines.push('  <style>');
+  htmlLines.push(globalCSS);
+  htmlLines.push('  </style>');
+  htmlLines.push('</head>');
+  htmlLines.push('<body>');
+  htmlLines.push('<div class="doc-content">');
 
   let listStack = [];
   const bodyContent = doc.body?.content || [];
 
   for (const element of bodyContent) {
     if (element.sectionBreak) {
-      htmlOutput.push('<div class="section-break"></div>');
+      htmlLines.push('<div class="section-break"></div>');
       continue;
     }
+
+    // Table of Contents
     if (element.tableOfContents) {
-      closeAllLists(listStack, htmlOutput);
+      closeAllLists(listStack, htmlLines);
       const tocHtml = await renderTableOfContents(
-        element.tableOfContents,
-        doc,
-        usedFonts,
+        element.tableOfContents, 
+        doc, 
+        usedFonts, 
         authClient,
         outputDir,
         namedStylesMap
       );
-      htmlOutput.push(tocHtml);
+      htmlLines.push(tocHtml);
       continue;
     }
+
+    // Paragraph
     if (element.paragraph) {
       const { html, listChange } = await renderParagraph(
         element.paragraph,
@@ -104,53 +107,57 @@ async function exportDocToHTML(docId, outputDir) {
         listStack,
         authClient,
         outputDir,
-        path.join(outputDir, 'images'),
+        imagesDir,
         namedStylesMap
       );
       if (listChange) {
-        handleListState(listChange, listStack, htmlOutput);
+        handleListState(listChange, listStack, htmlLines);
       }
       if (listStack.length > 0) {
-        htmlOutput.push(`<li>${html}</li>`);
+        htmlLines.push(`<li>${html}</li>`);
       } else {
-        htmlOutput.push(html);
+        htmlLines.push(html);
       }
       continue;
     }
+
+    // Table
     if (element.table) {
-      closeAllLists(listStack, htmlOutput);
+      closeAllLists(listStack, htmlLines);
       const tableHtml = await renderTable(
         element.table,
         doc,
         usedFonts,
         authClient,
         outputDir,
-        path.join(outputDir, 'images'),
+        imagesDir,
         namedStylesMap
       );
-      htmlOutput.push(tableHtml);
+      htmlLines.push(tableHtml);
       continue;
     }
+    // else skip
   }
 
-  closeAllLists(listStack, htmlOutput);
+  // close any open lists
+  closeAllLists(listStack, htmlLines);
 
-  htmlOutput.push('</div>');
-  htmlOutput.push('</body>');
-  htmlOutput.push('</html>');
+  htmlLines.push('</div>');
+  htmlLines.push('</body>');
+  htmlLines.push('</html>');
 
   // Insert Google Fonts link if needed
   const fontLink = buildGoogleFontsLink(Array.from(usedFonts));
   if (fontLink) {
-    const idx = htmlOutput.findIndex(l => l.includes('</title>'));
+    const idx = htmlLines.findIndex(l => l.includes('</title>'));
     if (idx >= 0) {
-      htmlOutput.splice(idx + 1, 0, `  <link rel="stylesheet" href="${fontLink}">`);
+      htmlLines.splice(idx + 1, 0, `  <link rel="stylesheet" href="${fontLink}">`);
     }
   }
 
   // Write index.html
   const indexPath = path.join(outputDir, 'index.html');
-  fs.writeFileSync(indexPath, htmlOutput.join('\n'), 'utf8');
+  fs.writeFileSync(indexPath, htmlLines.join('\n'), 'utf8');
   console.log(`HTML exported to: ${indexPath}`);
 
   // Write .htaccess
@@ -159,30 +166,39 @@ async function exportDocToHTML(docId, outputDir) {
   console.log(`.htaccess written to: ${htaccessPath}`);
 }
 
-// -------------------------------------
-// 1) Column width from doc
-// -------------------------------------
+// ------------------------------------------
+// 1) computeDocContainerWidth
+// ------------------------------------------
 function computeDocContainerWidth(doc) {
   let containerPx = 800; // fallback
   const ds = doc.documentStyle;
-  if (ds && ds.pageSize && ds.pageSize.width?.magnitude) {
+  if (ds?.pageSize?.width?.magnitude) {
     const pageW = ds.pageSize.width.magnitude;
     const leftM = ds.marginLeft?.magnitude || 72;
     const rightM = ds.marginRight?.magnitude || 72;
     const usablePts = pageW - (leftM + rightM);
-    if (usablePts>0) containerPx = ptToPx(usablePts);
+    if (usablePts>0) containerPx=ptToPx(usablePts);
   }
-  // Add a small tweak if you want
-  containerPx += 50; // or remove
+  containerPx += 50; // small tweak if you like
   return containerPx;
 }
 
-// -------------------------------------
-// 2) Global CSS
-// -------------------------------------
+// ------------------------------------------
+// 2) generateGlobalCSS
+// ------------------------------------------
 function generateGlobalCSS(doc, containerPx) {
   const lines = [];
+
   lines.push(`
+/* Reset headings so H3 isn't too big by default. 
+   We'll rely on doc's inline style for final font-size. */
+h1, h2, h3, h4, h5, h6 {
+  margin: 1em 0;
+  font-size: 1em;   /* neutral baseline */
+  font-weight: normal;  /* doc-based inline style sets final size/weight */
+}
+
+/* Basic container from doc-based column width + a small tweak. */
 body {
   margin: 0;
   font-family: sans-serif;
@@ -200,6 +216,47 @@ img {
   max-width: 100%;
   height: auto;
 }
+
+/* Named style classes: .doc-subtitle, etc. 
+   If doc sets inline style for size, that takes precedence. */
+.doc-subtitle {
+  display: block;
+  white-space: pre-wrap;
+}
+
+/* Table of contents styling, hierarchical indent */
+.doc-toc {
+  margin: 0.5em 0;
+  padding: 0.5em;
+  border: 1px dashed #666;
+  background: #f9f9f9;
+}
+.doc-toc h2 {
+  margin: 0 0 0.3em 0;
+  font-size: 1.2em;
+  font-weight: bold;
+}
+.doc-toc .toc-level-1 {
+  margin-left: 0;
+}
+.doc-toc .toc-level-2 {
+  margin-left: 1em;
+}
+.doc-toc .toc-level-3 {
+  margin-left: 2em;
+}
+.doc-toc .toc-level-4 {
+  margin-left: 3em;
+}
+
+.section-break {
+  page-break-before: always;
+}
+.doc-table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+}
+
 .bold { font-weight: bold; }
 .italic { font-style: italic; }
 .underline { text-decoration: underline; }
@@ -212,39 +269,10 @@ img {
   vertical-align: sub;
   font-size: 0.8em;
 }
-.section-break {
-  page-break-before: always;
-}
-.doc-toc {
-  margin: 0.5em 0;
-  padding: 0.5em;
-  border: 1px dashed #666;
-  background: #f9f9f9;
-}
-.doc-toc h2 {
-  margin: 0 0 0.3em 0;
-  font-size: 1.2em;
-  font-weight: bold;
-}
-/* TOC indentation */
-.doc-toc .toc-level-1 { margin-left: 0; }
-.doc-toc .toc-level-2 { margin-left: 1em; }
-.doc-toc .toc-level-3 { margin-left: 2em; }
-.doc-toc .toc-level-4 { margin-left: 3em; }
-
-.doc-subtitle {
-  display: block;
-  white-space: pre-wrap; /* multi-line subtitle */
-}
-
-.doc-table {
-  border-collapse: collapse;
-  margin: 0.5em 0;
-}
 `);
 
   // If doc has pageSize => add @page
-  if (doc.documentStyle?.pageSize?.width?.magnitude && doc.documentStyle?.pageSize?.height?.magnitude){
+  if (doc.documentStyle?.pageSize?.width?.magnitude && doc.documentStyle?.pageSize?.height?.magnitude) {
     const wIn = doc.documentStyle.pageSize.width.magnitude / 72;
     const hIn = doc.documentStyle.pageSize.height.magnitude / 72;
     const topM = (doc.documentStyle.marginTop?.magnitude||72)/72;
@@ -258,12 +286,13 @@ img {
 }
     `);
   }
+
   return lines.join('\n');
 }
 
-// -------------------------------------
-// 3) Table of Contents with indentation
-// -------------------------------------
+// ------------------------------------------
+// 3) Table of Contents
+// ------------------------------------------
 async function renderTableOfContents(
   toc,
   doc,
@@ -277,20 +306,18 @@ async function renderTableOfContents(
   if (toc.content) {
     for (const c of toc.content) {
       if (!c.paragraph) continue;
-      // detect the deepest heading level referenced by text runs in this paragraph
       let headingLevel = 1;
       for (const elem of c.paragraph.elements||[]) {
-        const s = elem.textRun?.textStyle;
-        if (s?.link?.headingId) {
-          const lvl = findHeadingLevelById(doc, s.link.headingId);
-          if(lvl>headingLevel) headingLevel=lvl;
+        const st = elem.textRun?.textStyle;
+        if (st?.link?.headingId) {
+          const lv = findHeadingLevelById(doc, st.link.headingId);
+          if(lv>headingLevel) headingLevel=lv;
         }
       }
       if(headingLevel<1) headingLevel=1;
       if(headingLevel>4) headingLevel=4;
 
-      // Render the paragraph normally
-      const { html: pHtml } = await renderParagraph(
+      const { html:pHtml } = await renderParagraph(
         c.paragraph,
         doc,
         usedFonts,
@@ -308,17 +335,17 @@ async function renderTableOfContents(
   return html;
 }
 
-/** findHeadingLevelById => integer 1..6 (or 1 fallback) */
-function findHeadingLevelById(doc, headingId) {
+/** Find heading level 1..6 for the given headingId, or 1 if not found. */
+function findHeadingLevelById(doc, headingId){
   const content = doc.body?.content||[];
   for(const e of content){
-    if(e.paragraph) {
+    if(e.paragraph){
       const ps=e.paragraph.paragraphStyle;
-      if(ps?.headingId===headingId) {
-        const namedType=ps.namedStyleType||'NORMAL_TEXT';
-        if(namedType.startsWith('HEADING_')){
-          const lvl=parseInt(namedType.replace('HEADING_',''),10);
-          if(lvl>=1 && lvl<=6) return lvl;
+      if(ps?.headingId===headingId){
+        const named=ps.namedStyleType||'NORMAL_TEXT';
+        if(named.startsWith('HEADING_')){
+          const lv=parseInt(named.replace('HEADING_',''),10);
+          if(lv>=1&&lv<=6) return lv;
         }
       }
     }
@@ -326,9 +353,9 @@ function findHeadingLevelById(doc, headingId) {
   return 1;
 }
 
-// -------------------------------------
+// ------------------------------------------
 // 4) Paragraph
-// -------------------------------------
+// ------------------------------------------
 async function renderParagraph(
   paragraph,
   doc,
@@ -342,20 +369,20 @@ async function renderParagraph(
   const style = paragraph.paragraphStyle||{};
   const namedType = style.namedStyleType||'NORMAL_TEXT';
 
-  // Merge doc-based named style
+  // Merge doc-based style
   let mergedParaStyle={};
   let mergedTextStyle={};
-  if (namedStylesMap[namedType]) {
-    mergedParaStyle = deepCopy(namedStylesMap[namedType].paragraphStyle);
-    mergedTextStyle = deepCopy(namedStylesMap[namedType].textStyle);
+  if(namedStylesMap[namedType]){
+    mergedParaStyle=deepCopy(namedStylesMap[namedType].paragraphStyle);
+    mergedTextStyle=deepCopy(namedStylesMap[namedType].textStyle);
   }
   deepMerge(mergedParaStyle, style);
 
   // bullet logic
-  let listChange = null;
-  const isRTL = (mergedParaStyle.direction==='RIGHT_TO_LEFT');
+  const isRTL=(mergedParaStyle.direction==='RIGHT_TO_LEFT');
+  let listChange=null;
   if (paragraph.bullet) {
-    listChange = detectListChange(paragraph.bullet, doc, listStack, isRTL);
+    listChange=detectListChange(paragraph.bullet,doc,listStack,isRTL);
   } else {
     if(listStack.length>0){
       const top=listStack[listStack.length-1];
@@ -363,51 +390,51 @@ async function renderParagraph(
     }
   }
 
-  // Title => h1, Subtitle => h2 class="doc-subtitle", etc.
+  // Title => <h1>, Subtitle => <h2 class="doc-subtitle">, heading => <hN>
   let tag='p';
-  if (namedType==='TITLE'){
+  if(namedType==='TITLE'){
     tag='h1';
-  } else if (namedType==='SUBTITLE'){
+  } else if(namedType==='SUBTITLE'){
     tag='h2 class="doc-subtitle"';
-  } else if (namedType.startsWith('HEADING_')){
+  } else if(namedType.startsWith('HEADING_')){
     const lv=parseInt(namedType.replace('HEADING_',''),10);
     if(lv>=1 && lv<=6) tag=`h${lv}`;
   }
 
-  let headingIdAttr = '';
-  if (style.headingId) {
-    headingIdAttr = ` id="heading-${escapeHtml(style.headingId)}"`;
+  let headingIdAttr='';
+  if(style.headingId){
+    headingIdAttr=` id="heading-${escapeHtml(style.headingId)}"`;
   }
 
   // alignment flipping
-  let align = mergedParaStyle.alignment;
-  if(isRTL && (align==='START' || align==='END')){
+  let align=mergedParaStyle.alignment;
+  if(isRTL&&(align==='START'||align==='END')){
     align=(align==='START')?'END':'START';
   }
 
-  // Build doc-based inline style: lineSpacing => line-height
+  // doc-based lineSpacing => line-height
   let inlineStyle='';
   if(align && alignmentMapLTR[align]){
-    inlineStyle += `text-align: ${alignmentMapLTR[align]};`;
+    inlineStyle += `text-align:${alignmentMapLTR[align]};`;
   }
   if(mergedParaStyle.lineSpacing){
     const ls=mergedParaStyle.lineSpacing/100;
-    inlineStyle += `line-height: ${ls};`;
+    inlineStyle += `line-height:${ls};`;
   }
   if(mergedParaStyle.spaceAbove?.magnitude){
-    inlineStyle += `margin-top: ${ptToPx(mergedParaStyle.spaceAbove.magnitude)}px;`;
+    inlineStyle += `margin-top:${ptToPx(mergedParaStyle.spaceAbove.magnitude)}px;`;
   }
   if(mergedParaStyle.spaceBelow?.magnitude){
-    inlineStyle += `margin-bottom: ${ptToPx(mergedParaStyle.spaceBelow.magnitude)}px;`;
+    inlineStyle += `margin-bottom:${ptToPx(mergedParaStyle.spaceBelow.magnitude)}px;`;
   }
   if(mergedParaStyle.indentFirstLine?.magnitude){
-    inlineStyle += `text-indent: ${ptToPx(mergedParaStyle.indentFirstLine.magnitude)}px;`;
+    inlineStyle += `text-indent:${ptToPx(mergedParaStyle.indentFirstLine.magnitude)}px;`;
   } else if(mergedParaStyle.indentStart?.magnitude){
-    inlineStyle += `margin-left: ${ptToPx(mergedParaStyle.indentStart.magnitude)}px;`;
+    inlineStyle += `margin-left:${ptToPx(mergedParaStyle.indentStart.magnitude)}px;`;
   }
 
-  let dirAttr = '';
-  if(mergedParaStyle.direction==='RIGHT_TO_LEFT') {
+  let dirAttr='';
+  if(mergedParaStyle.direction==='RIGHT_TO_LEFT'){
     dirAttr=' dir="rtl"';
   }
 
@@ -417,18 +444,17 @@ async function renderParagraph(
   for(const r of mergedRuns){
     if(r.inlineObjectElement){
       const objId=r.inlineObjectElement.inlineObjectId;
-      innerHtml+= await renderInlineObject(objId, doc, authClient, outputDir, imagesDir);
+      innerHtml+=await renderInlineObject(objId, doc, authClient, outputDir, imagesDir);
     } else if(r.textRun){
-      innerHtml+= renderTextRun(r.textRun, usedFonts, mergedTextStyle);
+      innerHtml+=renderTextRun(r.textRun, usedFonts, mergedTextStyle);
     }
   }
 
   let paragraphHtml = `<${tag}${headingIdAttr}${dirAttr}>${innerHtml}</${tag.split(' ')[0]}>`;
   if(inlineStyle){
-    // insert style= inline
     const closeBracket=paragraphHtml.indexOf('>');
     if(closeBracket>0){
-      paragraphHtml=paragraphHtml.slice(0, closeBracket)
+      paragraphHtml=paragraphHtml.slice(0,closeBracket)
         + ` style="${inlineStyle}"`
         + paragraphHtml.slice(closeBracket);
     }
@@ -437,15 +463,15 @@ async function renderParagraph(
   return { html: paragraphHtml, listChange };
 }
 
-// -------------------------------------
-// 5) Merge text runs
-// -------------------------------------
+// ------------------------------------------
+// 5) Merging Text Runs
+// ------------------------------------------
 function mergeTextRuns(elements){
   const merged=[];
   let last=null;
   for(const e of elements){
     if(e.inlineObjectElement){
-      merged.push({ inlineObjectElement:e.inlineObjectElement});
+      merged.push({ inlineObjectElement: e.inlineObjectElement});
       last=null;
     } else if(e.textRun){
       const style=e.textRun.textStyle||{};
@@ -453,7 +479,7 @@ function mergeTextRuns(elements){
       if(last && last.textRun && isSameTextStyle(last.textRun.textStyle,style)){
         last.textRun.content+=content;
       } else {
-        merged.push({ textRun:{ content, textStyle: deepCopy(style) }});
+        merged.push({ textRun:{ content, textStyle:deepCopy(style)}});
         last=merged[merged.length-1];
       }
     }
@@ -475,9 +501,9 @@ function isSameTextStyle(a,b){
   return true;
 }
 
-// -------------------------------------
-// 6) Render text run
-// -------------------------------------
+// ------------------------------------------
+// 6) Render Text Run
+// ------------------------------------------
 function renderTextRun(textRun, usedFonts, baseStyle){
   const finalStyle=deepCopy(baseStyle||{});
   deepMerge(finalStyle, textRun.textStyle||{});
@@ -522,6 +548,7 @@ function renderTextRun(textRun, usedFonts, baseStyle){
   openTag+='>';
   let closeTag='</span>';
 
+  // link => anchor
   if(finalStyle.link){
     let linkHref='';
     if(finalStyle.link.headingId){
@@ -545,9 +572,9 @@ function renderTextRun(textRun, usedFonts, baseStyle){
   return openTag+escapeHtml(content)+closeTag;
 }
 
-// -------------------------------------
+// ------------------------------------------
 // 7) Inline Objects (Images)
-// -------------------------------------
+// ------------------------------------------
 async function renderInlineObject(objectId, doc, authClient, outputDir, imagesDir){
   const inlineObj=doc.inlineObjects?.[objectId];
   if(!inlineObj) return'';
@@ -558,8 +585,7 @@ async function renderInlineObject(objectId, doc, authClient, outputDir, imagesDi
   const { imageProperties }=embedded;
   const { contentUri, size }=imageProperties;
 
-  // Some docs store scale in embedded.transform => scaleX, scaleY
-  let scaleX=1.0, scaleY=1.0;
+  let scaleX=1, scaleY=1;
   if(embedded.transform){
     if(embedded.transform.scaleX) scaleX=embedded.transform.scaleX;
     if(embedded.transform.scaleY) scaleY=embedded.transform.scaleY;
@@ -583,14 +609,14 @@ async function renderInlineObject(objectId, doc, authClient, outputDir, imagesDi
   return `<img src="${escapeHtml(imgSrc)}" alt="${escapeHtml(alt)}" style="${style}" />`;
 }
 
-// -------------------------------------
+// ------------------------------------------
 // 8) Lists
-// -------------------------------------
-function detectListChange(bullet,doc,listStack,isRTL){
+// ------------------------------------------
+function detectListChange(bullet, doc, listStack, isRTL){
   const listId=bullet.listId;
   const nestingLevel=bullet.nestingLevel||0;
   const listDef=doc.lists?.[listId];
-  if(!listDef?.listProperties?.nestingLevels) return null;
+  if(!listDef?.listProperties?.nestingLevels)return null;
 
   const glyph=listDef.listProperties.nestingLevels[nestingLevel];
   const isNumbered=glyph?.glyphType?.toLowerCase().includes('number');
@@ -609,7 +635,7 @@ function detectListChange(bullet,doc,listStack,isRTL){
   return null;
 }
 
-function handleListState(listChange,listStack,htmlLines){
+function handleListState(listChange, listStack, htmlLines){
   const actions=listChange.split('|');
   for(const action of actions){
     if(action.startsWith('start')){
@@ -634,7 +660,7 @@ function handleListState(listChange,listStack,htmlLines){
   }
 }
 
-function closeAllLists(listStack,htmlLines){
+function closeAllLists(listStack, htmlLines){
   while(listStack.length>0){
     const top=listStack.pop();
     if(top.startsWith('u')) htmlLines.push('</ul>');
@@ -642,11 +668,17 @@ function closeAllLists(listStack,htmlLines){
   }
 }
 
-// -------------------------------------
+// ------------------------------------------
 // 9) Table
-// -------------------------------------
+// ------------------------------------------
 async function renderTable(
-  table, doc, usedFonts, authClient, outputDir, imagesDir, namedStylesMap
+  table,
+  doc,
+  usedFonts,
+  authClient,
+  outputDir,
+  imagesDir,
+  namedStylesMap
 ){
   let html='<table class="doc-table" style="border-collapse:collapse; border:1px solid #ccc;">';
   for(const row of table.tableRows||[]){
@@ -655,7 +687,7 @@ async function renderTable(
       html+='<td style="border:1px solid #ccc; padding:0.5em;">';
       for(const c of cell.content||[]){
         if(c.paragraph){
-          const { html:pHtml } = await renderParagraph(
+          const { html:pHtml }=await renderParagraph(
             c.paragraph,
             doc,
             usedFonts,
@@ -676,9 +708,9 @@ async function renderTable(
   return html;
 }
 
-// -------------------------------------
+// ------------------------------------------
 // 10) Named Styles
-// -------------------------------------
+// ------------------------------------------
 function buildNamedStylesMap(doc){
   const map={};
   const named=doc.namedStyles?.styles||[];
@@ -691,9 +723,9 @@ function buildNamedStylesMap(doc){
   return map;
 }
 
-// -------------------------------------
+// ------------------------------------------
 // UTILS
-// -------------------------------------
+// ------------------------------------------
 async function getAuthClient(){
   const auth=new google.auth.GoogleAuth({
     keyFile:SERVICE_ACCOUNT_KEY_FILE,
@@ -705,7 +737,7 @@ async function getAuthClient(){
   return auth.getClient();
 }
 
-// The missing function that was causing ReferenceError
+/** Fixes "fetchAsBase64 is not defined" error. */
 async function fetchAsBase64(url, authClient){
   const resp=await authClient.request({
     url,
@@ -729,9 +761,7 @@ function deepMerge(base,overlay){
     }
   }
 }
-function deepCopy(obj){
-  return JSON.parse(JSON.stringify(obj));
-}
+function deepCopy(obj){ return JSON.parse(JSON.stringify(obj)); }
 function escapeHtml(str){
   return str
     .replace(/&/g,'&amp;')
@@ -739,20 +769,16 @@ function escapeHtml(str){
     .replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;');
 }
-function ptToPx(pts){
-  return Math.round(pts*1.3333);
-}
+function ptToPx(pts){ return Math.round(pts*1.3333); }
 function rgbToHex(r,g,b){
-  const nr=Math.round(r*255);
-  const ng=Math.round(g*255);
-  const nb=Math.round(b*255);
+  const nr=Math.round(r*255), ng=Math.round(g*255), nb=Math.round(b*255);
   return '#'+[nr,ng,nb].map(x=>x.toString(16).padStart(2,'0')).join('');
 }
 function buildGoogleFontsLink(fontFamilies){
   if(!fontFamilies||fontFamilies.length===0)return'';
   const unique=Array.from(new Set(fontFamilies));
   const familiesParam=unique.map(f=>f.trim().replace(/\s+/g,'+')).join('&family=');
-  return`https://fonts.googleapis.com/css2?family=${familiesParam}&display=swap`;
+  return `https://fonts.googleapis.com/css2?family=${familiesParam}&display=swap`;
 }
 
 // CLI
