@@ -6,15 +6,16 @@
  *
  * Exports a Google Doc to HTML + CSS with:
  *   - Accurate column width (from section/doc style)
- *   - Exact image sizing
- *   - Headings (H1..H6) with anchor IDs
- *   - Lists (<ul>, <ol>)
- *   - Justified text (text-align: justify)
- *   - Pagination (@page)
- *   - Table of contents (links to headings, in the same tab)
+ *   - Exact image sizing (no extra scaling)
+ *   - Headings (H1..H6) w/ anchor IDs (for the TOC)
+ *   - **TITLE** => <h1 class="doc-title">
+ *   - **SUBTITLE** => <h2 class="doc-subtitle">
+ *   - Justified text alignment
+ *   - Pagination (@page) if paginated
+ *   - Table of contents linking to headings
  *   - Google Fonts link
  *   - External images in /images/
- *   - Minimal .htaccess setting DirectoryIndex index.html
+ *   - Minimal .htaccess with DirectoryIndex
  *
  * No footnotes, comments, or other extras.
  */
@@ -23,14 +24,13 @@ const fs = require('fs');
 const path = require('path');
 const { google } = require('googleapis');
 
-// --------------------------------------
+// ---------------------------------------------------
 // CONFIG
-// --------------------------------------
+// ---------------------------------------------------
+const SERVICE_ACCOUNT_KEY_FILE = 'service_account.json';  // Update if needed
+const EMBED_IMAGES_AS_BASE64 = false;                     // Store images in images/ by default
 
-const SERVICE_ACCOUNT_KEY_FILE = 'service_account.json';
-const EMBED_IMAGES_AS_BASE64 = false; // store images in "images/" folder
-
-// For mapping paragraph alignment to CSS
+// Maps Google Docs paragraph alignment to CSS
 const alignmentMap = {
   START: 'left',
   CENTER: 'center',
@@ -38,10 +38,11 @@ const alignmentMap = {
   JUSTIFIED: 'justify'
 };
 
-// --------------------------------------
-// MAIN EXPORT FUNCTION
-// --------------------------------------
+// ---------------------------------------------------
+// MAIN EXPORT
+// ---------------------------------------------------
 async function exportDocToHTML(documentId, outputDir) {
+  // Ensure output directory and images subfolder
   fs.mkdirSync(outputDir, { recursive: true });
   const imagesDir = path.join(outputDir, 'images');
   fs.mkdirSync(imagesDir, { recursive: true });
@@ -52,15 +53,15 @@ async function exportDocToHTML(documentId, outputDir) {
   const { data: doc } = await docs.documents.get({ documentId });
   console.log(`Exporting document: ${doc.title}`);
 
-  // Determine column/padding from first section
+  // Handle column/padding from first section
   const sectionStyle = findFirstSectionStyle(doc);
   const colInfo = extractColumnInfo(sectionStyle);
 
-  // Prepare to build HTML
+  // Prepare HTML lines
   const usedFonts = new Set();
   const htmlLines = [];
 
-  // HTML skeleton
+  // Basic HTML structure
   htmlLines.push('<!DOCTYPE html>');
   htmlLines.push('<html lang="en">');
   htmlLines.push('<head>');
@@ -71,20 +72,23 @@ async function exportDocToHTML(documentId, outputDir) {
   htmlLines.push('  </style>');
   htmlLines.push('</head>');
   htmlLines.push('<body>');
-  htmlLines.push('<div class="doc-content">');
+  htmlLines.push('<div class="doc-content">'); // container
 
-  // Track lists
+  // We'll track any lists so we can open/close <ul>/<ol>
   let listStack = [];
   const bodyContent = doc.body && doc.body.content ? doc.body.content : [];
 
-  // Render each element
+  // Iterate over doc body
   for (const element of bodyContent) {
     if (element.sectionBreak) {
+      // Page or section break
       htmlLines.push('<div class="section-break"></div>');
       continue;
     }
-    // Table of Contents
+
+    // Table of contents
     if (element.tableOfContents) {
+      // close any open lists
       closeAllLists(listStack, htmlLines);
       const tocHtml = await renderTableOfContents(
         element.tableOfContents,
@@ -96,6 +100,7 @@ async function exportDocToHTML(documentId, outputDir) {
       htmlLines.push(tocHtml);
       continue;
     }
+
     // Paragraph
     if (element.paragraph) {
       const { html, listChange } = await renderParagraph(
@@ -111,14 +116,17 @@ async function exportDocToHTML(documentId, outputDir) {
         handleListState(listChange, listStack, htmlLines);
       }
       if (listStack.length > 0) {
+        // If inside a list, wrap in <li>
         htmlLines.push(`<li>${html}</li>`);
       } else {
         htmlLines.push(html);
       }
       continue;
     }
+
     // Table
     if (element.table) {
+      // close lists first
       closeAllLists(listStack, htmlLines);
       const tableHtml = await renderTable(
         element.table,
@@ -131,18 +139,19 @@ async function exportDocToHTML(documentId, outputDir) {
       htmlLines.push(tableHtml);
       continue;
     }
+
     // other element types if needed
   }
 
-  // Close any open lists
+  // End any open lists
   closeAllLists(listStack, htmlLines);
 
-  // Finish HTML
+  // End doc-content & body/html
   htmlLines.push('</div>');
   htmlLines.push('</body>');
   htmlLines.push('</html>');
 
-  // Insert Google Fonts link if needed
+  // Insert Google Fonts <link> if needed
   const fontLink = buildGoogleFontsLink(Array.from(usedFonts));
   if (fontLink) {
     const insertIndex = htmlLines.findIndex(l => l.includes('</title>'));
@@ -160,26 +169,22 @@ async function exportDocToHTML(documentId, outputDir) {
   fs.writeFileSync(indexPath, htmlLines.join('\n'), 'utf8');
   console.log(`HTML exported to: ${indexPath}`);
 
-  // .htaccess
+  // Write .htaccess
   const htaccessPath = path.join(outputDir, '.htaccess');
   fs.writeFileSync(htaccessPath, 'DirectoryIndex index.html\n', 'utf8');
   console.log(`.htaccess written to: ${htaccessPath}`);
 }
 
-// --------------------------------------
-// TOC RENDERING
-// --------------------------------------
-async function renderTableOfContents(
-  toc,
-  doc,
-  usedFonts,
-  authClient,
-  outputDir
-) {
+// ---------------------------------------------------
+// TABLE OF CONTENTS RENDERING
+// ---------------------------------------------------
+async function renderTableOfContents(toc, doc, usedFonts, authClient, outputDir) {
   let html = '<div class="doc-toc">\n<h2>Table of Contents</h2>\n';
   if (toc.content) {
     for (const c of toc.content) {
       if (c.paragraph) {
+        // Render paragraphs in TOC
+        // Pass an empty listStack so it won't conflict with main body
         const { html: pHtml } = await renderParagraph(
           c.paragraph,
           doc,
@@ -196,9 +201,9 @@ async function renderTableOfContents(
   return html;
 }
 
-// --------------------------------------
-// PARAGRAPH RENDERING
-// --------------------------------------
+// ---------------------------------------------------
+// PARAGRAPH RENDERING (Incl. TITLE/SUBTITLE, HEADINGS)
+// ---------------------------------------------------
 async function renderParagraph(
   paragraph,
   doc,
@@ -211,7 +216,7 @@ async function renderParagraph(
   const style = paragraph.paragraphStyle || {};
   const namedStyleType = style.namedStyleType || 'NORMAL_TEXT';
 
-  // Check if list
+  // Check if this is a bullet/numbered list
   let listChange = null;
   if (paragraph.bullet) {
     const listId = paragraph.bullet.listId;
@@ -228,27 +233,39 @@ async function renderParagraph(
       }
     }
   } else {
+    // If not a bullet but we have an open list, we should close it
     if (listStack.length > 0) {
       const top = listStack[listStack.length - 1];
       listChange = `end${top.toUpperCase()}`;
     }
   }
 
-  // Heading vs normal
+  // Decide which HTML tag to use
   let tag = 'p';
   let headingIdAttr = '';
-  if (namedStyleType.startsWith('HEADING_')) {
+  let classAttr = '';
+
+  if (namedStyleType === 'TITLE') {
+    // Google Docs Title
+    tag = 'h1';
+    classAttr = ' class="doc-title"';
+  } else if (namedStyleType === 'SUBTITLE') {
+    // Google Docs Subtitle
+    tag = 'h2';
+    classAttr = ' class="doc-subtitle"';
+  } else if (namedStyleType.startsWith('HEADING_')) {
+    // HEADINGS
     const level = parseInt(namedStyleType.replace('HEADING_', ''), 10);
     if (level >= 1 && level <= 6) {
       tag = 'h' + level;
     }
-    // If docs gives a headingId, anchor it
     if (style.headingId) {
+      // use the doc's headingId for anchor linking
       headingIdAttr = ` id="heading-${escapeHtml(style.headingId)}"`;
     }
   }
 
-  // Paragraph style
+  // Build inline style for alignment, spacing, etc.
   let inlineStyle = '';
   if (style.alignment && alignmentMap[style.alignment]) {
     inlineStyle += `text-align: ${alignmentMap[style.alignment]};`;
@@ -268,7 +285,7 @@ async function renderParagraph(
     inlineStyle += `margin-bottom: ${ptToPx(style.spaceBelow.magnitude)}px;`;
   }
 
-  // Inner HTML
+  // Build innerHTML from paragraph elements
   let innerHtml = '';
   if (paragraph.elements) {
     for (const elem of paragraph.elements) {
@@ -287,7 +304,8 @@ async function renderParagraph(
     }
   }
 
-  let paragraphHtml = `<${tag}${headingIdAttr}`;
+  // Construct final paragraph HTML
+  let paragraphHtml = `<${tag}${headingIdAttr}${classAttr}`;
   if (inlineStyle) {
     paragraphHtml += ` style="${inlineStyle}"`;
   }
@@ -296,37 +314,42 @@ async function renderParagraph(
   return { html: paragraphHtml, listChange };
 }
 
-// --------------------------------------
+// ---------------------------------------------------
 // TEXT RUN RENDERING
-// --------------------------------------
+// ---------------------------------------------------
 function renderTextRun(textRun, usedFonts) {
   let { content, textStyle } = textRun;
   if (!content) return '';
-  content = content.replace(/\n$/, '');
+  content = content.replace(/\n$/, ''); // remove trailing newline
 
   const cssClasses = [];
   let inlineStyle = '';
 
   if (textStyle) {
+    // Bold/Italic/Underline/Strikethrough
     if (textStyle.bold) cssClasses.push('bold');
     if (textStyle.italic) cssClasses.push('italic');
     if (textStyle.underline) cssClasses.push('underline');
     if (textStyle.strikethrough) cssClasses.push('strikethrough');
 
+    // Superscript/Subscript
     if (textStyle.baselineOffset === 'SUPERSCRIPT') {
       cssClasses.push('superscript');
     } else if (textStyle.baselineOffset === 'SUBSCRIPT') {
       cssClasses.push('subscript');
     }
 
+    // Font size
     if (textStyle.fontSize && textStyle.fontSize.magnitude) {
       inlineStyle += `font-size: ${textStyle.fontSize.magnitude}pt;`;
     }
+    // Font family
     if (textStyle.weightedFontFamily && textStyle.weightedFontFamily.fontFamily) {
       const fam = textStyle.weightedFontFamily.fontFamily;
       usedFonts.add(fam);
       inlineStyle += `font-family: '${fam}', sans-serif;`;
     }
+    // Color
     if (
       textStyle.foregroundColor &&
       textStyle.foregroundColor.color &&
@@ -348,7 +371,7 @@ function renderTextRun(textRun, usedFonts) {
   openTag += '>';
   let closeTag = '</span>';
 
-  // Links: no "target=_blank" now
+  // If there's a link (no target=_blank now)
   if (textStyle && textStyle.link) {
     let linkHref = '';
     if (textStyle.link.headingId) {
@@ -358,7 +381,6 @@ function renderTextRun(textRun, usedFonts) {
     }
     if (linkHref) {
       openTag = `<a href="${escapeHtml(linkHref)}"`;
-      // No new window
       if (cssClasses.length > 0) {
         openTag += ` class="${cssClasses.join(' ')}"`;
       }
@@ -373,16 +395,10 @@ function renderTextRun(textRun, usedFonts) {
   return openTag + escapeHtml(content) + closeTag;
 }
 
-// --------------------------------------
-// INLINE OBJECT (IMAGE)
-// --------------------------------------
-async function renderInlineObject(
-  objectId,
-  doc,
-  authClient,
-  outputDir,
-  imagesDir
-) {
+// ---------------------------------------------------
+// INLINE OBJECTS (IMAGES)
+// ---------------------------------------------------
+async function renderInlineObject(objectId, doc, authClient, outputDir, imagesDir) {
   const inlineObj = doc.inlineObjects[objectId];
   if (!inlineObj) return '';
 
@@ -397,12 +413,14 @@ async function renderInlineObject(
     const dataUrl = `data:image/*;base64,${base64Data}`;
     return buildImageTag(dataUrl, size, embedded);
   } else {
+    // Save as external file
     const base64Data = await fetchAsBase64(contentUri, authClient);
     const buffer = Buffer.from(base64Data, 'base64');
     const imgFileName = `image_${objectId}.png`;
     const imgFilePath = path.join(imagesDir, imgFileName);
     fs.writeFileSync(imgFilePath, buffer);
 
+    // relative path from index.html to images/
     const imgSrc = path.relative(outputDir, imgFilePath);
     return buildImageTag(imgSrc, size, embedded);
   }
@@ -419,9 +437,9 @@ function buildImageTag(src, size, embedded) {
   return `<img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" style="${style}" />`;
 }
 
-// --------------------------------------
+// ---------------------------------------------------
 // TABLE RENDERING
-// --------------------------------------
+// ---------------------------------------------------
 async function renderTable(
   table,
   doc,
@@ -457,14 +475,14 @@ async function renderTable(
   return html;
 }
 
-// --------------------------------------
+// ---------------------------------------------------
 // LIST STATE
-// --------------------------------------
+// ---------------------------------------------------
 function handleListState(listChange, listStack, htmlOutput) {
   const actions = listChange.split('|');
-  actions.forEach(action => {
+  for (const action of actions) {
     if (action.startsWith('start')) {
-      const type = action.replace('start', '').toLowerCase();
+      const type = action.replace('start', '').toLowerCase(); // 'ul' or 'ol'
       if (type === 'ul') {
         htmlOutput.push('<ul>');
         listStack.push('ul');
@@ -477,7 +495,7 @@ function handleListState(listChange, listStack, htmlOutput) {
       if (current === 'ul') htmlOutput.push('</ul>');
       else htmlOutput.push('</ol>');
     }
-  });
+  }
 }
 
 function closeAllLists(listStack, htmlOutput) {
@@ -488,9 +506,9 @@ function closeAllLists(listStack, htmlOutput) {
   }
 }
 
-// --------------------------------------
-// FIND SECTION & COLUMN
-// --------------------------------------
+// ---------------------------------------------------
+// SECTION & COLUMN INFO
+// ---------------------------------------------------
 function findFirstSectionStyle(doc) {
   const content = doc.body && doc.body.content ? doc.body.content : [];
   for (const c of content) {
@@ -516,9 +534,9 @@ function extractColumnInfo(sectionStyle) {
   return null;
 }
 
-// --------------------------------------
-// GLOBAL CSS
-// --------------------------------------
+// ---------------------------------------------------
+// CSS GENERATION
+// ---------------------------------------------------
 function generateGlobalCSS(doc, colInfo) {
   const lines = [];
 
@@ -580,8 +598,22 @@ img {
   font-size: 1.2em;
   font-weight: bold;
 }
+
+/* NEW: Title & Subtitle styling */
+.doc-title {
+  font-size: 2.2em;
+  font-weight: bold;
+  margin: 0.6em 0 0.3em 0;
+}
+.doc-subtitle {
+  font-size: 1.4em;
+  font-weight: 400;
+  color: #444;
+  margin: 0 0 0.8em 0;
+}
 `);
 
+  // If colInfo exists, apply exact column width
   if (colInfo && colInfo.colWidthPx) {
     const pad = colInfo.colPaddingPx || 0;
     lines.push(`
@@ -592,6 +624,7 @@ img {
 }
     `);
   } else {
+    // fallback
     lines.push(`
 .doc-content {
   max-width: 800px;
@@ -600,6 +633,7 @@ img {
     `);
   }
 
+  // Paginated doc => add @page
   if (doc.documentStyle && doc.documentStyle.pageSize) {
     const { width, height } = doc.documentStyle.pageSize;
     if (width && height) {
@@ -630,9 +664,9 @@ img {
   return lines.join('\n');
 }
 
-// --------------------------------------
+// ---------------------------------------------------
 // GOOGLE FONTS
-// --------------------------------------
+// ---------------------------------------------------
 function buildGoogleFontsLink(fontFamilies) {
   if (!fontFamilies || fontFamilies.length === 0) return '';
   const uniqueFamilies = Array.from(new Set(fontFamilies));
@@ -642,9 +676,9 @@ function buildGoogleFontsLink(fontFamilies) {
   return `https://fonts.googleapis.com/css2?family=${familiesParam}&display=swap`;
 }
 
-// --------------------------------------
+// ---------------------------------------------------
 // UTILS
-// --------------------------------------
+// ---------------------------------------------------
 async function getAuthClient() {
   const auth = new google.auth.GoogleAuth({
     keyFile: SERVICE_ACCOUNT_KEY_FILE,
@@ -684,9 +718,9 @@ async function fetchAsBase64(url, authClient) {
   return Buffer.from(resp.data, 'binary').toString('base64');
 }
 
-// --------------------------------------
-// CMD-LINE
-// --------------------------------------
+// ---------------------------------------------------
+// COMMAND LINE ENTRY
+// ---------------------------------------------------
 if (require.main === module) {
   const docId = process.argv[2];
   const outputDir = process.argv[3];
