@@ -7,11 +7,11 @@
  * Exports a Google Doc to HTML + CSS with:
  *   - Accurate column width (from section/doc style)
  *   - Exact image sizing
- *   - Headings (H1..H6) w/ optional IDs
+ *   - Headings (H1..H6) with anchor IDs
  *   - Lists (<ul>, <ol>)
  *   - Justified text (text-align: justify)
  *   - Pagination (@page)
- *   - Table of contents (with clickable links to headings)
+ *   - Table of contents (links to headings, in the same tab)
  *   - Google Fonts link
  *   - External images in /images/
  *   - Minimal .htaccess setting DirectoryIndex index.html
@@ -27,13 +27,10 @@ const { google } = require('googleapis');
 // CONFIG
 // --------------------------------------
 
-// Path to your service account JSON (or OAuth creds).
 const SERVICE_ACCOUNT_KEY_FILE = 'service_account.json';
+const EMBED_IMAGES_AS_BASE64 = false; // store images in "images/" folder
 
-// Default to storing images externally in "images/" folder.
-const EMBED_IMAGES_AS_BASE64 = false;
-
-// Map Docs alignment to CSS
+// For mapping paragraph alignment to CSS
 const alignmentMap = {
   START: 'left',
   CENTER: 'center',
@@ -45,30 +42,25 @@ const alignmentMap = {
 // MAIN EXPORT FUNCTION
 // --------------------------------------
 async function exportDocToHTML(documentId, outputDir) {
-  // Ensure output directory
   fs.mkdirSync(outputDir, { recursive: true });
-
-  // Also prepare an images subfolder
   const imagesDir = path.join(outputDir, 'images');
   fs.mkdirSync(imagesDir, { recursive: true });
 
-  // Auth & Setup
+  // Auth & fetch doc
   const authClient = await getAuthClient();
   const docs = google.docs({ version: 'v1', auth: authClient });
-
-  // Fetch the document
   const { data: doc } = await docs.documents.get({ documentId });
   console.log(`Exporting document: ${doc.title}`);
 
-  // Column/padding info
+  // Determine column/padding from first section
   const sectionStyle = findFirstSectionStyle(doc);
   const colInfo = extractColumnInfo(sectionStyle);
 
-  // Build up the HTML
+  // Prepare to build HTML
   const usedFonts = new Set();
   const htmlLines = [];
 
-  // Basic HTML skeleton
+  // HTML skeleton
   htmlLines.push('<!DOCTYPE html>');
   htmlLines.push('<html lang="en">');
   htmlLines.push('<head>');
@@ -79,36 +71,31 @@ async function exportDocToHTML(documentId, outputDir) {
   htmlLines.push('  </style>');
   htmlLines.push('</head>');
   htmlLines.push('<body>');
-  htmlLines.push('<div class="doc-content">'); // main container
+  htmlLines.push('<div class="doc-content">');
 
-  // List stack
+  // Track lists
   let listStack = [];
-
-  // Process body content
   const bodyContent = doc.body && doc.body.content ? doc.body.content : [];
+
+  // Render each element
   for (const element of bodyContent) {
     if (element.sectionBreak) {
       htmlLines.push('<div class="section-break"></div>');
       continue;
     }
-
     // Table of Contents
     if (element.tableOfContents) {
-      // close any open lists first
       closeAllLists(listStack, htmlLines);
-
       const tocHtml = await renderTableOfContents(
         element.tableOfContents,
         doc,
         usedFonts,
         authClient,
-        outputDir,
-        listStack
+        outputDir
       );
       htmlLines.push(tocHtml);
       continue;
     }
-
     // Paragraph
     if (element.paragraph) {
       const { html, listChange } = await renderParagraph(
@@ -130,7 +117,6 @@ async function exportDocToHTML(documentId, outputDir) {
       }
       continue;
     }
-
     // Table
     if (element.table) {
       closeAllLists(listStack, htmlLines);
@@ -145,12 +131,13 @@ async function exportDocToHTML(documentId, outputDir) {
       htmlLines.push(tableHtml);
       continue;
     }
+    // other element types if needed
   }
 
   // Close any open lists
   closeAllLists(listStack, htmlLines);
 
-  // close container, body, html
+  // Finish HTML
   htmlLines.push('</div>');
   htmlLines.push('</body>');
   htmlLines.push('</html>');
@@ -168,40 +155,36 @@ async function exportDocToHTML(documentId, outputDir) {
     }
   }
 
-  // Write out index.html
+  // Write index.html
   const indexPath = path.join(outputDir, 'index.html');
   fs.writeFileSync(indexPath, htmlLines.join('\n'), 'utf8');
   console.log(`HTML exported to: ${indexPath}`);
 
-  // Write .htaccess
+  // .htaccess
   const htaccessPath = path.join(outputDir, '.htaccess');
   fs.writeFileSync(htaccessPath, 'DirectoryIndex index.html\n', 'utf8');
   console.log(`.htaccess written to: ${htaccessPath}`);
 }
 
 // --------------------------------------
-// 1) TOC RENDERING
+// TOC RENDERING
 // --------------------------------------
 async function renderTableOfContents(
   toc,
   doc,
   usedFonts,
   authClient,
-  outputDir,
-  listStack
+  outputDir
 ) {
-  // The TOC is basically paragraphs referencing headings. We wrap in .doc-toc
-  let html = `<div class="doc-toc">\n<h2>Table of Contents</h2>\n`;
-
+  let html = '<div class="doc-toc">\n<h2>Table of Contents</h2>\n';
   if (toc.content) {
-    // Render each paragraph in the TOC
     for (const c of toc.content) {
       if (c.paragraph) {
         const { html: pHtml } = await renderParagraph(
           c.paragraph,
           doc,
           usedFonts,
-          listStack, // typically pass empty or fresh list stack for a clean TOC
+          [],
           authClient,
           outputDir
         );
@@ -214,7 +197,7 @@ async function renderTableOfContents(
 }
 
 // --------------------------------------
-// 2) PARAGRAPH RENDERING (HEADINGS + IDs)
+// PARAGRAPH RENDERING
 // --------------------------------------
 async function renderParagraph(
   paragraph,
@@ -228,7 +211,7 @@ async function renderParagraph(
   const style = paragraph.paragraphStyle || {};
   const namedStyleType = style.namedStyleType || 'NORMAL_TEXT';
 
-  // If bullet => part of a list
+  // Check if list
   let listChange = null;
   if (paragraph.bullet) {
     const listId = paragraph.bullet.listId;
@@ -245,13 +228,13 @@ async function renderParagraph(
       }
     }
   } else {
-    if (listStack && listStack.length > 0) {
+    if (listStack.length > 0) {
       const top = listStack[listStack.length - 1];
       listChange = `end${top.toUpperCase()}`;
     }
   }
 
-  // Determine paragraph tag. If heading => <h1>.. <h6>
+  // Heading vs normal
   let tag = 'p';
   let headingIdAttr = '';
   if (namedStyleType.startsWith('HEADING_')) {
@@ -259,13 +242,13 @@ async function renderParagraph(
     if (level >= 1 && level <= 6) {
       tag = 'h' + level;
     }
-    // If there's a headingId from the style, use it as an anchor
+    // If docs gives a headingId, anchor it
     if (style.headingId) {
       headingIdAttr = ` id="heading-${escapeHtml(style.headingId)}"`;
     }
   }
 
-  // Build inline style for alignment, spacing, indentation
+  // Paragraph style
   let inlineStyle = '';
   if (style.alignment && alignmentMap[style.alignment]) {
     inlineStyle += `text-align: ${alignmentMap[style.alignment]};`;
@@ -285,7 +268,7 @@ async function renderParagraph(
     inlineStyle += `margin-bottom: ${ptToPx(style.spaceBelow.magnitude)}px;`;
   }
 
-  // Render paragraph elements
+  // Inner HTML
   let innerHtml = '';
   if (paragraph.elements) {
     for (const elem of paragraph.elements) {
@@ -304,7 +287,6 @@ async function renderParagraph(
     }
   }
 
-  // Construct the paragraph tag
   let paragraphHtml = `<${tag}${headingIdAttr}`;
   if (inlineStyle) {
     paragraphHtml += ` style="${inlineStyle}"`;
@@ -315,7 +297,7 @@ async function renderParagraph(
 }
 
 // --------------------------------------
-// 3) TEXT RUN RENDERING (LINKS TO HEADINGS)
+// TEXT RUN RENDERING
 // --------------------------------------
 function renderTextRun(textRun, usedFonts) {
   let { content, textStyle } = textRun;
@@ -326,32 +308,25 @@ function renderTextRun(textRun, usedFonts) {
   let inlineStyle = '';
 
   if (textStyle) {
-    // Bold/Italic/Underline/Strikethrough
     if (textStyle.bold) cssClasses.push('bold');
     if (textStyle.italic) cssClasses.push('italic');
     if (textStyle.underline) cssClasses.push('underline');
     if (textStyle.strikethrough) cssClasses.push('strikethrough');
 
-    // Superscript / Subscript
     if (textStyle.baselineOffset === 'SUPERSCRIPT') {
       cssClasses.push('superscript');
     } else if (textStyle.baselineOffset === 'SUBSCRIPT') {
       cssClasses.push('subscript');
     }
 
-    // Font size
     if (textStyle.fontSize && textStyle.fontSize.magnitude) {
       inlineStyle += `font-size: ${textStyle.fontSize.magnitude}pt;`;
     }
-
-    // Font family
     if (textStyle.weightedFontFamily && textStyle.weightedFontFamily.fontFamily) {
       const fam = textStyle.weightedFontFamily.fontFamily;
       usedFonts.add(fam);
       inlineStyle += `font-family: '${fam}', sans-serif;`;
     }
-
-    // Foreground color
     if (
       textStyle.foregroundColor &&
       textStyle.foregroundColor.color &&
@@ -363,7 +338,6 @@ function renderTextRun(textRun, usedFonts) {
     }
   }
 
-  // Create the opening tag
   let openTag = '<span';
   if (cssClasses.length > 0) {
     openTag += ` class="${cssClasses.join(' ')}"`;
@@ -374,20 +348,17 @@ function renderTextRun(textRun, usedFonts) {
   openTag += '>';
   let closeTag = '</span>';
 
-  // If there's a link
-  //   link.url => normal URL
-  //   link.headingId => anchor to a heading in the doc
+  // Links: no "target=_blank" now
   if (textStyle && textStyle.link) {
     let linkHref = '';
-    // If there's a headingId, use an in-page anchor
     if (textStyle.link.headingId) {
       linkHref = `#heading-${escapeHtml(textStyle.link.headingId)}`;
     } else if (textStyle.link.url) {
       linkHref = textStyle.link.url;
     }
-
     if (linkHref) {
-      openTag = `<a href="${escapeHtml(linkHref)}" target="_blank"`;
+      openTag = `<a href="${escapeHtml(linkHref)}"`;
+      // No new window
       if (cssClasses.length > 0) {
         openTag += ` class="${cssClasses.join(' ')}"`;
       }
@@ -403,7 +374,7 @@ function renderTextRun(textRun, usedFonts) {
 }
 
 // --------------------------------------
-// 4) INLINE OBJECTS (IMAGES)
+// INLINE OBJECT (IMAGE)
 // --------------------------------------
 async function renderInlineObject(
   objectId,
@@ -421,27 +392,22 @@ async function renderInlineObject(
   const { imageProperties } = embedded;
   const { contentUri, size } = imageProperties;
 
-  // Download or embed image
   if (EMBED_IMAGES_AS_BASE64) {
-    // *Not used by default, but let's keep the logic if needed
     const base64Data = await fetchAsBase64(contentUri, authClient);
     const dataUrl = `data:image/*;base64,${base64Data}`;
     return buildImageTag(dataUrl, size, embedded);
   } else {
-    // Store file in images/
     const base64Data = await fetchAsBase64(contentUri, authClient);
     const buffer = Buffer.from(base64Data, 'base64');
     const imgFileName = `image_${objectId}.png`;
     const imgFilePath = path.join(imagesDir, imgFileName);
     fs.writeFileSync(imgFilePath, buffer);
 
-    // Create relative path from index.html to the images folder
     const imgSrc = path.relative(outputDir, imgFilePath);
     return buildImageTag(imgSrc, size, embedded);
   }
 }
 
-/** Build an <img> tag with exact sizing + alt text. */
 function buildImageTag(src, size, embedded) {
   let style = '';
   if (size && size.width && size.height) {
@@ -454,7 +420,7 @@ function buildImageTag(src, size, embedded) {
 }
 
 // --------------------------------------
-// 5) TABLE RENDERING
+// TABLE RENDERING
 // --------------------------------------
 async function renderTable(
   table,
@@ -469,7 +435,6 @@ async function renderTable(
     html += '<tr>';
     for (const cell of row.tableCells) {
       html += '<td style="border: 1px solid #ccc; padding: 0.5em;">';
-      // Each cell may contain multiple paragraphs
       for (const c of cell.content) {
         if (c.paragraph) {
           const { html: pHtml } = await renderParagraph(
@@ -493,7 +458,7 @@ async function renderTable(
 }
 
 // --------------------------------------
-// 6) LIST STATE MANAGEMENT
+// LIST STATE
 // --------------------------------------
 function handleListState(listChange, listStack, htmlOutput) {
   const actions = listChange.split('|');
@@ -508,7 +473,6 @@ function handleListState(listChange, listStack, htmlOutput) {
         listStack.push('ol');
       }
     } else if (action.startsWith('end')) {
-      const type = action.replace('end', '').toLowerCase();
       const current = listStack.pop();
       if (current === 'ul') htmlOutput.push('</ul>');
       else htmlOutput.push('</ol>');
@@ -525,7 +489,7 @@ function closeAllLists(listStack, htmlOutput) {
 }
 
 // --------------------------------------
-// 7) FIND SECTION & COLUMN INFO
+// FIND SECTION & COLUMN
 // --------------------------------------
 function findFirstSectionStyle(doc) {
   const content = doc.body && doc.body.content ? doc.body.content : [];
@@ -534,7 +498,6 @@ function findFirstSectionStyle(doc) {
       return c.sectionBreak.sectionStyle;
     }
   }
-  // no explicit section break => null
   return null;
 }
 
@@ -554,7 +517,7 @@ function extractColumnInfo(sectionStyle) {
 }
 
 // --------------------------------------
-// 8) GLOBAL CSS
+// GLOBAL CSS
 // --------------------------------------
 function generateGlobalCSS(doc, colInfo) {
   const lines = [];
@@ -637,7 +600,6 @@ img {
     `);
   }
 
-  // If paginated doc => @page rule
   if (doc.documentStyle && doc.documentStyle.pageSize) {
     const { width, height } = doc.documentStyle.pageSize;
     if (width && height) {
@@ -669,7 +631,7 @@ img {
 }
 
 // --------------------------------------
-// 9) GOOGLE FONTS LINK
+// GOOGLE FONTS
 // --------------------------------------
 function buildGoogleFontsLink(fontFamilies) {
   if (!fontFamilies || fontFamilies.length === 0) return '';
@@ -681,7 +643,7 @@ function buildGoogleFontsLink(fontFamilies) {
 }
 
 // --------------------------------------
-// 10) UTILS
+// UTILS
 // --------------------------------------
 async function getAuthClient() {
   const auth = new google.auth.GoogleAuth({
@@ -723,7 +685,7 @@ async function fetchAsBase64(url, authClient) {
 }
 
 // --------------------------------------
-// 11) COMMAND-LINE ENTRY
+// CMD-LINE
 // --------------------------------------
 if (require.main === module) {
   const docId = process.argv[2];
