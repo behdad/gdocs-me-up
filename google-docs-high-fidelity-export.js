@@ -1,33 +1,64 @@
 /**
  * google-docs-high-fidelity-export.js
  *
+ * High-Fidelity Exporter for Google Docs
+ *
+ * Features:
+ *  - **Named Styles**: Title, Subtitle, Headings (H1..H6) mapped to real HTML headings,
+ *    with doc-based font sizing and inline styling (bold, italic, color, etc.).
+ *  - **Heading Size Override**: Resets default <h1>.. <h6> to neutral size in CSS,
+ *    so doc’s inline size precisely controls final heading font.
+ *  - **Line Spacing**: Honors doc’s paragraph lineSpacing (e.g., 1.15, 1.5),
+ *    plus spaceAbove/spaceBelow, and text indentation.
+ *  - **Right-to-Left Paragraphs**: Sets `dir="rtl"` for paragraphs whose style
+ *    indicates RIGHT_TO_LEFT, flipping alignment START/END if needed.
+ *  - **Alignment**: PRESERVES doc-based alignment (CENTER, JUSTIFIED, etc.).
+ *  - **Lists**: Bullet / Numbered lists, including RTL bullets if direction=RIGHT_TO_LEFT.
+ *  - **Images**: Exact doc-based sizes, with transform scaling if used in the doc.
+ *    Exports images to an `images/` folder. Uses `max-width` / `max-height` so they
+ *    never exceed doc’s reported size or the container width.
+ *  - **Table of Contents**: Indents each TOC entry based on the heading level of its
+ *    linked heading (Heading 1 => level 1, etc.).
+ *  - **Tables**: Exports Google Docs tables using <table>, <tr>, <td>,
+ *    preserving paragraph styles inside each cell.
+ *  - **Column Width**: Infers container width from doc’s pageSize minus margins
+ *    (with a small tweak). Then sets `.doc-content { max-width: ... }`.
+ *  - **Google Fonts**: Gathers all distinct fonts used, generating a <link> to
+ *    https://fonts.googleapis.com for a near-pixel match to the doc’s text families.
+ *  - **Merging Text Runs**: Consecutive text runs with identical styling are combined
+ *    into a single <span> to avoid excessive markup.
+ *  - **.htaccess**: Writes a minimal `.htaccess` with `DirectoryIndex index.html`.
+ *  - **Service Account Auth**: Reads from `SERVICE_ACCOUNT_KEY_FILE`, or adapt to your
+ *    auth method. Requires the doc to be accessible with the given credentials.
+ *
  * Usage:
  *   node google-docs-high-fidelity-export.js <DOC_ID> <OUTPUT_DIR>
  *
- * Features:
- *   - Doc-based lineSpacing, alignment, direction=RIGHT_TO_LEFT
- *   - Respects doc's Title, Subtitle, Headings (H1..H6)
- *   - Table of contents with hierarchical indentation
- *   - Column width from doc (pageSize minus margins) + small tweak
- *   - Merging consecutive text runs
- *   - Images with doc-based dimension and transform scale
- *   - Overriding default browser heading styling so H3 isn't “too big”
- *   - Minimal .htaccess
+ * Example:
+ *   node google-docs-high-fidelity-export.js 1AbCdEfgHIjKLMnOP <my-export-dir>
  *
- * Fixes:
- *   - "fetchAsBase64 is not defined"
- *   - "H3 looks too large" by overriding heading tags in CSS
+ * Then open <my-export-dir>/index.html to see the rendered doc.
+ *
+ * Dependencies:
+ *   - Node.js
+ *   - "googleapis" library (npm install googleapis)
+ *   - A valid Google service account JSON key or other OAuth method
+ *
+ * This script merges doc-based styling with neutral heading overrides so your headings
+ * appear at the exact doc size without default HTML heading inflation. Right-to-left,
+ * justification, bullet-lists, images, and more are also handled for a truly “high-fidelity”
+ * offline representation of your Google Doc.
  */
 
 const fs = require('fs');
 const path = require('path');
 const { google } = require('googleapis');
 
-// ----------- CONFIG -----------
+// ------------- CONFIG -------------
 const SERVICE_ACCOUNT_KEY_FILE = 'service_account.json';
-const EMBED_IMAGES_AS_BASE64 = false; // store images in a folder
+const EMBED_IMAGES_AS_BASE64 = false;
 
-// Basic alignment for LTR paragraphs
+// Basic alignment map for LTR paragraphs
 const alignmentMapLTR = {
   START: 'left',
   CENTER: 'center',
@@ -35,9 +66,6 @@ const alignmentMapLTR = {
   JUSTIFIED: 'justify'
 };
 
-// ------------------------------------------
-// MAIN EXPORT
-// ------------------------------------------
 async function exportDocToHTML(docId, outputDir) {
   fs.mkdirSync(outputDir, { recursive: true });
   const imagesDir = path.join(outputDir, 'images');
@@ -52,7 +80,7 @@ async function exportDocToHTML(docId, outputDir) {
   // Named styles for Title, Subtitle, Headings, etc.
   const namedStylesMap = buildNamedStylesMap(doc);
 
-  // Determine container width from doc documentStyle
+  // Container width from docStyle
   const colInfo = computeDocContainerWidth(doc);
 
   // Build global CSS
@@ -82,14 +110,12 @@ async function exportDocToHTML(docId, outputDir) {
       htmlLines.push('<div class="section-break"></div>');
       continue;
     }
-
-    // Table of Contents
     if (element.tableOfContents) {
       closeAllLists(listStack, htmlLines);
       const tocHtml = await renderTableOfContents(
-        element.tableOfContents, 
-        doc, 
-        usedFonts, 
+        element.tableOfContents,
+        doc,
+        usedFonts,
         authClient,
         outputDir,
         namedStylesMap
@@ -97,8 +123,6 @@ async function exportDocToHTML(docId, outputDir) {
       htmlLines.push(tocHtml);
       continue;
     }
-
-    // Paragraph
     if (element.paragraph) {
       const { html, listChange } = await renderParagraph(
         element.paragraph,
@@ -120,8 +144,6 @@ async function exportDocToHTML(docId, outputDir) {
       }
       continue;
     }
-
-    // Table
     if (element.table) {
       closeAllLists(listStack, htmlLines);
       const tableHtml = await renderTable(
@@ -136,17 +158,15 @@ async function exportDocToHTML(docId, outputDir) {
       htmlLines.push(tableHtml);
       continue;
     }
-    // else skip
   }
 
-  // close any open lists
   closeAllLists(listStack, htmlLines);
 
   htmlLines.push('</div>');
   htmlLines.push('</body>');
   htmlLines.push('</html>');
 
-  // Insert Google Fonts link if needed
+  // Insert Google Fonts if needed
   const fontLink = buildGoogleFontsLink(Array.from(usedFonts));
   if (fontLink) {
     const idx = htmlLines.findIndex(l => l.includes('</title>'));
@@ -161,14 +181,13 @@ async function exportDocToHTML(docId, outputDir) {
   console.log(`HTML exported to: ${indexPath}`);
 
   // Write .htaccess
-  const htaccessPath = path.join(outputDir, '.htaccess');
-  fs.writeFileSync(htaccessPath, 'DirectoryIndex index.html\n', 'utf8');
-  console.log(`.htaccess written to: ${htaccessPath}`);
+  fs.writeFileSync(path.join(outputDir, '.htaccess'), 'DirectoryIndex index.html\n', 'utf8');
+  console.log(`.htaccess written to: ${path.join(outputDir, '.htaccess')}`);
 }
 
-// ------------------------------------------
-// 1) computeDocContainerWidth
-// ------------------------------------------
+// -----------------------------------------------------
+// Column width from doc documentStyle
+// -----------------------------------------------------
 function computeDocContainerWidth(doc) {
   let containerPx = 800; // fallback
   const ds = doc.documentStyle;
@@ -177,28 +196,26 @@ function computeDocContainerWidth(doc) {
     const leftM = ds.marginLeft?.magnitude || 72;
     const rightM = ds.marginRight?.magnitude || 72;
     const usablePts = pageW - (leftM + rightM);
-    if (usablePts>0) containerPx=ptToPx(usablePts);
+    if (usablePts > 0) containerPx = ptToPx(usablePts);
   }
-  containerPx += 50; // small tweak if you like
+  // small tweak
+  containerPx += 50;
   return containerPx;
 }
 
-// ------------------------------------------
-// 2) generateGlobalCSS
-// ------------------------------------------
+// -----------------------------------------------------
+// Global CSS with heading overrides
+// -----------------------------------------------------
 function generateGlobalCSS(doc, containerPx) {
   const lines = [];
-
   lines.push(`
-/* Reset headings so H3 isn't too big by default. 
-   We'll rely on doc's inline style for final font-size. */
+/* Reset heading sizes so doc-based inline style rules. */
 h1, h2, h3, h4, h5, h6 {
   margin: 1em 0;
-  font-size: 1em;   /* neutral baseline */
-  font-weight: normal;  /* doc-based inline style sets final size/weight */
+  font-size: 1em;
+  font-weight: normal;
 }
 
-/* Basic container from doc-based column width + a small tweak. */
 body {
   margin: 0;
   font-family: sans-serif;
@@ -216,47 +233,6 @@ img {
   max-width: 100%;
   height: auto;
 }
-
-/* Named style classes: .doc-subtitle, etc. 
-   If doc sets inline style for size, that takes precedence. */
-.doc-subtitle {
-  display: block;
-  white-space: pre-wrap;
-}
-
-/* Table of contents styling, hierarchical indent */
-.doc-toc {
-  margin: 0.5em 0;
-  padding: 0.5em;
-  border: 1px dashed #666;
-  background: #f9f9f9;
-}
-.doc-toc h2 {
-  margin: 0 0 0.3em 0;
-  font-size: 1.2em;
-  font-weight: bold;
-}
-.doc-toc .toc-level-1 {
-  margin-left: 0;
-}
-.doc-toc .toc-level-2 {
-  margin-left: 1em;
-}
-.doc-toc .toc-level-3 {
-  margin-left: 2em;
-}
-.doc-toc .toc-level-4 {
-  margin-left: 3em;
-}
-
-.section-break {
-  page-break-before: always;
-}
-.doc-table {
-  border-collapse: collapse;
-  margin: 0.5em 0;
-}
-
 .bold { font-weight: bold; }
 .italic { font-style: italic; }
 .underline { text-decoration: underline; }
@@ -269,9 +245,38 @@ img {
   vertical-align: sub;
   font-size: 0.8em;
 }
+.section-break {
+  page-break-before: always;
+}
+
+/* Table of contents, hierarchical indentation */
+.doc-toc {
+  margin: 0.5em 0;
+  padding: 0.5em;
+  border: 1px dashed #666;
+  background: #f9f9f9;
+}
+.doc-toc h2 {
+  margin: 0 0 0.3em 0;
+  font-size: 1.2em;
+  font-weight: bold;
+}
+.doc-toc .toc-level-1 { margin-left: 0; }
+.doc-toc .toc-level-2 { margin-left: 1em; }
+.doc-toc .toc-level-3 { margin-left: 2em; }
+.doc-toc .toc-level-4 { margin-left: 3em; }
+
+.doc-subtitle {
+  display: block;
+  white-space: pre-wrap;
+}
+.doc-table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+}
 `);
 
-  // If doc has pageSize => add @page
+  // If doc has pageSize => @page
   if (doc.documentStyle?.pageSize?.width?.magnitude && doc.documentStyle?.pageSize?.height?.magnitude) {
     const wIn = doc.documentStyle.pageSize.width.magnitude / 72;
     const hIn = doc.documentStyle.pageSize.height.magnitude / 72;
@@ -290,9 +295,9 @@ img {
   return lines.join('\n');
 }
 
-// ------------------------------------------
-// 3) Table of Contents
-// ------------------------------------------
+// -----------------------------------------------------
+// Table of Contents (Indentation by heading level)
+// -----------------------------------------------------
 async function renderTableOfContents(
   toc,
   doc,
@@ -311,11 +316,11 @@ async function renderTableOfContents(
         const st = elem.textRun?.textStyle;
         if (st?.link?.headingId) {
           const lv = findHeadingLevelById(doc, st.link.headingId);
-          if(lv>headingLevel) headingLevel=lv;
+          if (lv>headingLevel) headingLevel=lv;
         }
       }
-      if(headingLevel<1) headingLevel=1;
-      if(headingLevel>4) headingLevel=4;
+      if (headingLevel<1) headingLevel=1;
+      if (headingLevel>4) headingLevel=4;
 
       const { html:pHtml } = await renderParagraph(
         c.paragraph,
@@ -335,17 +340,16 @@ async function renderTableOfContents(
   return html;
 }
 
-/** Find heading level 1..6 for the given headingId, or 1 if not found. */
-function findHeadingLevelById(doc, headingId){
+function findHeadingLevelById(doc, headingId) {
   const content = doc.body?.content||[];
-  for(const e of content){
-    if(e.paragraph){
-      const ps=e.paragraph.paragraphStyle;
-      if(ps?.headingId===headingId){
-        const named=ps.namedStyleType||'NORMAL_TEXT';
-        if(named.startsWith('HEADING_')){
+  for (const e of content) {
+    if (e.paragraph) {
+      const ps = e.paragraph.paragraphStyle;
+      if (ps?.headingId===headingId) {
+        const named = ps.namedStyleType||'NORMAL_TEXT';
+        if (named.startsWith('HEADING_')) {
           const lv=parseInt(named.replace('HEADING_',''),10);
-          if(lv>=1&&lv<=6) return lv;
+          if(lv>=1 && lv<=6) return lv;
         }
       }
     }
@@ -353,9 +357,9 @@ function findHeadingLevelById(doc, headingId){
   return 1;
 }
 
-// ------------------------------------------
-// 4) Paragraph
-// ------------------------------------------
+// -----------------------------------------------------
+// Paragraph
+// -----------------------------------------------------
 async function renderParagraph(
   paragraph,
   doc,
@@ -390,7 +394,7 @@ async function renderParagraph(
     }
   }
 
-  // Title => <h1>, Subtitle => <h2 class="doc-subtitle">, heading => <hN>
+  // Title => <h1>, Subtitle => <h2 class="doc-subtitle">, heading => <hX>, else <p>
   let tag='p';
   if(namedType==='TITLE'){
     tag='h1';
@@ -408,7 +412,7 @@ async function renderParagraph(
 
   // alignment flipping
   let align=mergedParaStyle.alignment;
-  if(isRTL&&(align==='START'||align==='END')){
+  if(isRTL && (align==='START'||align==='END')){
     align=(align==='START')?'END':'START';
   }
 
@@ -444,13 +448,13 @@ async function renderParagraph(
   for(const r of mergedRuns){
     if(r.inlineObjectElement){
       const objId=r.inlineObjectElement.inlineObjectId;
-      innerHtml+=await renderInlineObject(objId, doc, authClient, outputDir, imagesDir);
+      innerHtml += await renderInlineObject(objId, doc, authClient, outputDir, imagesDir);
     } else if(r.textRun){
-      innerHtml+=renderTextRun(r.textRun, usedFonts, mergedTextStyle);
+      innerHtml += renderTextRun(r.textRun, usedFonts, mergedTextStyle);
     }
   }
 
-  let paragraphHtml = `<${tag}${headingIdAttr}${dirAttr}>${innerHtml}</${tag.split(' ')[0]}>`;
+  let paragraphHtml=`<${tag}${headingIdAttr}${dirAttr}>${innerHtml}</${tag.split(' ')[0]}>`;
   if(inlineStyle){
     const closeBracket=paragraphHtml.indexOf('>');
     if(closeBracket>0){
@@ -463,15 +467,15 @@ async function renderParagraph(
   return { html: paragraphHtml, listChange };
 }
 
-// ------------------------------------------
-// 5) Merging Text Runs
-// ------------------------------------------
+// -----------------------------------------------------
+// Merging text runs
+// -----------------------------------------------------
 function mergeTextRuns(elements){
   const merged=[];
   let last=null;
   for(const e of elements){
     if(e.inlineObjectElement){
-      merged.push({ inlineObjectElement: e.inlineObjectElement});
+      merged.push({ inlineObjectElement:e.inlineObjectElement});
       last=null;
     } else if(e.textRun){
       const style=e.textRun.textStyle||{};
@@ -501,9 +505,9 @@ function isSameTextStyle(a,b){
   return true;
 }
 
-// ------------------------------------------
-// 6) Render Text Run
-// ------------------------------------------
+// -----------------------------------------------------
+// Rendering text runs
+// -----------------------------------------------------
 function renderTextRun(textRun, usedFonts, baseStyle){
   const finalStyle=deepCopy(baseStyle||{});
   deepMerge(finalStyle, textRun.textStyle||{});
@@ -548,7 +552,6 @@ function renderTextRun(textRun, usedFonts, baseStyle){
   openTag+='>';
   let closeTag='</span>';
 
-  // link => anchor
   if(finalStyle.link){
     let linkHref='';
     if(finalStyle.link.headingId){
@@ -572,9 +575,9 @@ function renderTextRun(textRun, usedFonts, baseStyle){
   return openTag+escapeHtml(content)+closeTag;
 }
 
-// ------------------------------------------
+// -----------------------------------------------------
 // 7) Inline Objects (Images)
-// ------------------------------------------
+// -----------------------------------------------------
 async function renderInlineObject(objectId, doc, authClient, outputDir, imagesDir){
   const inlineObj=doc.inlineObjects?.[objectId];
   if(!inlineObj) return'';
@@ -609,9 +612,9 @@ async function renderInlineObject(objectId, doc, authClient, outputDir, imagesDi
   return `<img src="${escapeHtml(imgSrc)}" alt="${escapeHtml(alt)}" style="${style}" />`;
 }
 
-// ------------------------------------------
+// -----------------------------------------------------
 // 8) Lists
-// ------------------------------------------
+// -----------------------------------------------------
 function detectListChange(bullet, doc, listStack, isRTL){
   const listId=bullet.listId;
   const nestingLevel=bullet.nestingLevel||0;
@@ -659,8 +662,7 @@ function handleListState(listChange, listStack, htmlLines){
     }
   }
 }
-
-function closeAllLists(listStack, htmlLines){
+function closeAllLists(listStack,htmlLines){
   while(listStack.length>0){
     const top=listStack.pop();
     if(top.startsWith('u')) htmlLines.push('</ul>');
@@ -668,9 +670,9 @@ function closeAllLists(listStack, htmlLines){
   }
 }
 
-// ------------------------------------------
+// -----------------------------------------------------
 // 9) Table
-// ------------------------------------------
+// -----------------------------------------------------
 async function renderTable(
   table,
   doc,
@@ -708,9 +710,9 @@ async function renderTable(
   return html;
 }
 
-// ------------------------------------------
+// -----------------------------------------------------
 // 10) Named Styles
-// ------------------------------------------
+// -----------------------------------------------------
 function buildNamedStylesMap(doc){
   const map={};
   const named=doc.namedStyles?.styles||[];
@@ -723,9 +725,9 @@ function buildNamedStylesMap(doc){
   return map;
 }
 
-// ------------------------------------------
+// -----------------------------------------------------
 // UTILS
-// ------------------------------------------
+// -----------------------------------------------------
 async function getAuthClient(){
   const auth=new google.auth.GoogleAuth({
     keyFile:SERVICE_ACCOUNT_KEY_FILE,
@@ -737,7 +739,7 @@ async function getAuthClient(){
   return auth.getClient();
 }
 
-/** Fixes "fetchAsBase64 is not defined" error. */
+/** fetchAsBase64 => fetch image content from drive with auth, return base64 */
 async function fetchAsBase64(url, authClient){
   const resp=await authClient.request({
     url,
@@ -761,7 +763,9 @@ function deepMerge(base,overlay){
     }
   }
 }
-function deepCopy(obj){ return JSON.parse(JSON.stringify(obj)); }
+function deepCopy(obj){
+  return JSON.parse(JSON.stringify(obj));
+}
 function escapeHtml(str){
   return str
     .replace(/&/g,'&amp;')
@@ -769,7 +773,9 @@ function escapeHtml(str){
     .replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;');
 }
-function ptToPx(pts){ return Math.round(pts*1.3333); }
+function ptToPx(pts){
+  return Math.round(pts*1.3333);
+}
 function rgbToHex(r,g,b){
   const nr=Math.round(r*255), ng=Math.round(g*255), nb=Math.round(b*255);
   return '#'+[nr,ng,nb].map(x=>x.toString(16).padStart(2,'0')).join('');
