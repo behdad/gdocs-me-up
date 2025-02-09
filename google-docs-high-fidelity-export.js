@@ -5,20 +5,21 @@
  *   node google-docs-high-fidelity-export.js <DOC_ID> <OUTPUT_DIR>
  *
  * Exports a Google Doc to HTML + CSS with:
- *   - A doc title <h1> block in the body
  *   - Accurate column width (from section/doc style)
  *   - Exact image sizing (no extra scaling)
  *   - Headings (H1..H6)
  *   - Lists (<ul>, <ol>)
+ *   - Justified text (text-align: justify)
  *   - Pagination (via @page if doc is paginated)
- *   - Fonts (Google Fonts link)
- *   - Text attributes (bold, italic, underline, color, size, justification)
+ *   - Google Fonts link
+ *   - Text attributes (bold, italic, underline, color, size)
  *   - Tables
+ *   - Table of contents (if doc has one)
  *
- * Also creates:
- *   - index.html  (the main output)
- *   - images/     (optional, if EMBED_IMAGES_AS_BASE64 = false)
- *   - .htaccess   (placeholder file)
+ * Creates:
+ *   - <OUTPUT_DIR>/index.html
+ *   - <OUTPUT_DIR>/.htaccess (sets DirectoryIndex to index.html)
+ *   - <OUTPUT_DIR>/images/ (contains image_<id>.png if any images)
  *
  * No footnotes, comments, or other extras.
  */
@@ -28,10 +29,14 @@ const path = require('path');
 const { google } = require('googleapis');
 
 // ------------------ CONFIG ------------------
-const SERVICE_ACCOUNT_KEY_FILE = 'service_account.json'; // Path to your service account JSON
-const EMBED_IMAGES_AS_BASE64 = true; // Toggle to false to store images as separate files
 
-// For mapping Docs paragraph alignment to CSS alignment:
+// Path to your service account JSON (or OAuth creds).
+const SERVICE_ACCOUNT_KEY_FILE = 'service_account.json';
+
+// Default to storing images externally in "images/" folder.
+const EMBED_IMAGES_AS_BASE64 = false;
+
+// Maps Docs alignment to CSS
 const alignmentMap = {
   START: 'left',
   CENTER: 'center',
@@ -46,20 +51,24 @@ async function exportDocToHTML(documentId, outputDir) {
   // Ensure the output directory exists
   fs.mkdirSync(outputDir, { recursive: true });
 
+  // Also prepare an images subfolder
+  const imagesDir = path.join(outputDir, 'images');
+  fs.mkdirSync(imagesDir, { recursive: true });
+
   // Auth & Setup
   const authClient = await getAuthClient();
 
-  // Get the document structure
+  // Fetch the document
   const docs = google.docs({ version: 'v1', auth: authClient });
   const { data: doc } = await docs.documents.get({ documentId });
   console.log(`Exporting document: ${doc.title}`);
 
-  // Extract column and padding info (single column).
+  // Find column/padding info
   const sectionStyle = findFirstSectionStyle(doc);
   const colInfo = extractColumnInfo(sectionStyle);
 
-  // Prepare sets, arrays, and accumulators
-  const usedFonts = new Set();     // to build a single Google Fonts link
+  // Prepare sets and arrays
+  const usedFonts = new Set(); // track fonts for Google Fonts link
   let htmlOutput = [];
 
   // Basic HTML skeleton
@@ -67,6 +76,7 @@ async function exportDocToHTML(documentId, outputDir) {
   htmlOutput.push('<html lang="en">');
   htmlOutput.push('<head>');
   htmlOutput.push('  <meta charset="UTF-8">');
+  // Only in the <title> tag for the browser
   htmlOutput.push(`  <title>${escapeHtml(doc.title)}</title>`);
   // We'll insert Google Fonts link later if fonts are used
   htmlOutput.push('  <style>');
@@ -75,62 +85,79 @@ async function exportDocToHTML(documentId, outputDir) {
   htmlOutput.push('</head>');
   htmlOutput.push('<body>');
 
-  // Optionally show the document title as an H1 at top:
-  htmlOutput.push(`<h1 class="doc-title">${escapeHtml(doc.title)}</h1>`);
-
-  // Wrap all content in a container matching the doc’s column width
+  // .doc-content container
   htmlOutput.push('<div class="doc-content">');
 
-  // We’ll track current list nesting so we know when to open/close <ul>/<ol>
+  // We’ll track current list nesting (for <ul>, <ol>)
   let listStack = [];
 
-  // Traverse the doc body
+  // Go through the doc body content
   const bodyContent = doc.body && doc.body.content ? doc.body.content : [];
   for (const element of bodyContent) {
-    // Section breaks (page or column breaks in paginated docs)
     if (element.sectionBreak) {
-      // Insert a visual marker or page-break
       htmlOutput.push('<div class="section-break"></div>');
       continue;
     }
 
+    // If there's a table of contents, render it
+    if (element.tableOfContents) {
+      const tocHtml = await renderTableOfContents(
+        element.tableOfContents, 
+        doc, 
+        usedFonts, 
+        authClient, 
+        outputDir
+      );
+      // Make sure no open list is pending
+      closeAllLists(listStack, htmlOutput);
+      htmlOutput.push(tocHtml);
+      continue;
+    }
+
+    // Paragraph
     if (element.paragraph) {
-      // Render paragraph or heading
       const { html, listChange } = await renderParagraph(
         element.paragraph,
         doc,
         usedFonts,
         listStack,
         authClient,
-        outputDir
+        outputDir,
+        imagesDir
       );
-
-      // Handle list start/end logic
       if (listChange) {
         handleListState(listChange, listStack, htmlOutput);
       }
-
-      // If inside a list, wrap in <li>; otherwise just output
       if (listStack.length > 0) {
         htmlOutput.push(`<li>${html}</li>`);
       } else {
         htmlOutput.push(html);
       }
+      continue;
+    }
 
-    } else if (element.table) {
-      // Render a table
-      const tableHtml = await renderTable(element.table, doc, usedFonts, authClient, outputDir);
-      // Ensure any open lists are closed before a table
+    // Table
+    if (element.table) {
       closeAllLists(listStack, htmlOutput);
+      const tableHtml = await renderTable(
+        element.table, 
+        doc, 
+        usedFonts, 
+        authClient, 
+        outputDir,
+        imagesDir
+      );
       htmlOutput.push(tableHtml);
+      continue;
+    }
 
-    } // else skip other element types
+    // other elements can be handled if needed
   }
 
   // Close any open lists
   closeAllLists(listStack, htmlOutput);
 
-  // Close doc-content & body/html
+  // Close doc-content & body
   htmlOutput.push('</div>'); // .doc-content
   htmlOutput.push('</body>');
   htmlOutput.push('</html>');
@@ -153,19 +180,14 @@ async function exportDocToHTML(documentId, outputDir) {
   fs.writeFileSync(indexPath, htmlOutput.join('\n'), 'utf8');
   console.log(`HTML exported to: ${indexPath}`);
 
-  // Write .htaccess (minimal example)
+  // Write .htaccess (only sets directory index)
   const htaccessPath = path.join(outputDir, '.htaccess');
-  fs.writeFileSync(htaccessPath, [
-    'Options +FollowSymLinks',
-    'RewriteEngine On',
-    '# Add other directives as needed.'
-  ].join('\n'), 'utf8');
+  fs.writeFileSync(htaccessPath, 'DirectoryIndex index.html\n', 'utf8');
   console.log(`.htaccess written to: ${htaccessPath}`);
 }
 
 // ---------------------------------------
-// Section / Column Info
-// ---------------------------------------
+// findFirstSectionStyle (Missing in your version)
 function findFirstSectionStyle(doc) {
   const content = doc.body && doc.body.content ? doc.body.content : [];
   for (const c of content) {
@@ -177,6 +199,8 @@ function findFirstSectionStyle(doc) {
   return null;
 }
 
+// ---------------------------------------
+// extractColumnInfo
 function extractColumnInfo(sectionStyle) {
   if (!sectionStyle) return null;
   const colProps = sectionStyle.columnProperties;
@@ -193,9 +217,55 @@ function extractColumnInfo(sectionStyle) {
 }
 
 // ---------------------------------------
+// Table of Contents Rendering
+// ---------------------------------------
+async function renderTableOfContents(
+  toc,
+  doc,
+  usedFonts,
+  authClient,
+  outputDir
+) {
+  // The TOC is similar to paragraphs. We'll wrap in <div class="doc-toc">.
+  // Inside, each 'content' item might have paragraphs that link to headings.
+  // We'll just reuse our paragraph renderer for each paragraph, ignoring lists for now.
+
+  let html = '<div class="doc-toc">\n';
+  html += '<h2>Table of Contents</h2>\n';
+
+  if (toc.content) {
+    for (const c of toc.content) {
+      if (c.paragraph) {
+        // We pass an empty listStack to avoid messing up normal doc lists.
+        const { html: pHtml } = await renderParagraph(
+          c.paragraph,
+          doc,
+          usedFonts,
+          [],
+          authClient,
+          outputDir
+        );
+        html += pHtml + '\n';
+      }
+    }
+  }
+
+  html += '</div>';
+  return html;
+}
+
+// ---------------------------------------
 // Paragraph Rendering
 // ---------------------------------------
-async function renderParagraph(paragraph, doc, usedFonts, listStack, authClient, outputDir) {
+async function renderParagraph(
+  paragraph,
+  doc,
+  usedFonts,
+  listStack,
+  authClient,
+  outputDir,
+  imagesDir
+) {
   const style = paragraph.paragraphStyle || {};
   const namedStyleType = style.namedStyleType || 'NORMAL_TEXT';
 
@@ -216,7 +286,7 @@ async function renderParagraph(paragraph, doc, usedFonts, listStack, authClient,
       }
     }
   } else {
-    if (listStack.length > 0) {
+    if (listStack && listStack.length > 0) {
       const top = listStack[listStack.length - 1];
       listChange = `end${top.toUpperCase()}`;
     }
@@ -236,8 +306,7 @@ async function renderParagraph(paragraph, doc, usedFonts, listStack, authClient,
 
   // Map alignment from Docs to CSS
   if (style.alignment && alignmentMap[style.alignment]) {
-    const cssAlign = alignmentMap[style.alignment];
-    inlineStyle += `text-align: ${cssAlign};`;
+    inlineStyle += `text-align: ${alignmentMap[style.alignment]};`;
   }
   if (style.lineSpacing) {
     inlineStyle += `line-height: ${style.lineSpacing / 100};`;
@@ -261,7 +330,13 @@ async function renderParagraph(paragraph, doc, usedFonts, listStack, authClient,
       innerHtml += renderTextRun(elem.textRun, usedFonts);
     } else if (elem.inlineObjectElement) {
       const objectId = elem.inlineObjectElement.inlineObjectId;
-      innerHtml += await renderInlineObject(objectId, doc, authClient, outputDir);
+      innerHtml += await renderInlineObject(
+        objectId,
+        doc,
+        authClient,
+        outputDir,
+        imagesDir
+      );
     }
   }
 
@@ -296,14 +371,17 @@ function renderTextRun(textRun, usedFonts) {
       cssClasses.push('subscript');
     }
 
+    // Font size
     if (textStyle.fontSize && textStyle.fontSize.magnitude) {
       inlineStyle += `font-size: ${textStyle.fontSize.magnitude}pt;`;
     }
+    // Font family
     if (textStyle.weightedFontFamily && textStyle.weightedFontFamily.fontFamily) {
       const fam = textStyle.weightedFontFamily.fontFamily;
       usedFonts.add(fam);
       inlineStyle += `font-family: '${fam}', sans-serif;`;
     }
+    // Color
     if (
       textStyle.foregroundColor &&
       textStyle.foregroundColor.color &&
@@ -325,6 +403,7 @@ function renderTextRun(textRun, usedFonts) {
   openTag += '>';
   let closeTag = '</span>';
 
+  // Hyperlink
   if (textStyle && textStyle.link && textStyle.link.url) {
     openTag = `<a href="${escapeHtml(textStyle.link.url)}" target="_blank"`;
     if (cssClasses.length > 0) {
@@ -343,7 +422,13 @@ function renderTextRun(textRun, usedFonts) {
 // ---------------------------------------
 // Inline Objects (Images)
 // ---------------------------------------
-async function renderInlineObject(objectId, doc, authClient, outputDir) {
+async function renderInlineObject(
+  objectId,
+  doc,
+  authClient,
+  outputDir,
+  imagesDir
+) {
   const inlineObj = doc.inlineObjects[objectId];
   if (!inlineObj) return '';
 
@@ -353,19 +438,17 @@ async function renderInlineObject(objectId, doc, authClient, outputDir) {
   const { imageProperties } = embedded;
   const { contentUri, size } = imageProperties;
 
-  let imgSrc = '';
-  if (EMBED_IMAGES_AS_BASE64) {
-    const base64Data = await fetchAsBase64(contentUri, authClient);
-    imgSrc = `data:image/*;base64,${base64Data}`;
-  } else {
-    // store as separate file in outputDir
-    const base64Data = await fetchAsBase64(contentUri, authClient);
-    const buffer = Buffer.from(base64Data, 'base64');
-    const imgFileName = `image_${objectId}.png`;
-    const imgFilePath = path.join(outputDir, imgFileName);
-    fs.writeFileSync(imgFilePath, buffer);
-    imgSrc = imgFileName; // relative to index.html in same folder
-  }
+  // We store as separate files in images/
+  const base64Data = await fetchAsBase64(contentUri, authClient);
+  const buffer = Buffer.from(base64Data, 'base64');
+
+  // Make a consistent name
+  const imgFileName = `image_${objectId}.png`;
+  const imgFilePath = path.join(imagesDir, imgFileName);
+  fs.writeFileSync(imgFilePath, buffer);
+
+  // Create relative path from index.html to the images folder
+  const imgSrc = path.relative(outputDir, imgFilePath);
 
   // Use exact doc sizing
   let style = '';
@@ -384,7 +467,14 @@ async function renderInlineObject(objectId, doc, authClient, outputDir) {
 // ---------------------------------------
 // Table Rendering (Basic)
 // ---------------------------------------
-async function renderTable(table, doc, usedFonts, authClient, outputDir) {
+async function renderTable(
+  table,
+  doc,
+  usedFonts,
+  authClient,
+  outputDir,
+  imagesDir
+) {
   let html = '<table class="doc-table" style="border-collapse: collapse; border: 1px solid #ccc;">';
   for (const row of table.tableRows) {
     html += '<tr>';
@@ -398,7 +488,8 @@ async function renderTable(table, doc, usedFonts, authClient, outputDir) {
             usedFonts,
             [],
             authClient,
-            outputDir
+            outputDir,
+            imagesDir
           );
           html += pHtml;
         }
@@ -415,10 +506,11 @@ async function renderTable(table, doc, usedFonts, authClient, outputDir) {
 // Helper: Manage List State
 // ---------------------------------------
 function handleListState(listChange, listStack, htmlOutput) {
+  // e.g. "startUL", "endUL", "startOL", "endOL" or combined with '|'
   const actions = listChange.split('|');
   actions.forEach(action => {
     if (action.startsWith('start')) {
-      const type = action.replace('start', '').toLowerCase();
+      const type = action.replace('start', '').toLowerCase(); // ul or ol
       if (type === 'ul') {
         htmlOutput.push('<ul>');
         listStack.push('ul');
@@ -456,15 +548,6 @@ body {
   line-height: 1.5;
 }
 
-/* Title inserted at top */
-.doc-title {
-  margin: 1em auto;
-  font-size: 1.8em;
-  font-weight: bold;
-  text-align: center;
-}
-
-/* Container that enforces column width */
 .doc-content {
   margin: 1em auto;
 }
@@ -473,7 +556,7 @@ p, li {
 }
 h1, h2, h3, h4, h5, h6 {
   margin: 0.8em 0;
-  font-family: inherit; /* preserve doc’s font if set */
+  font-family: inherit; /* preserve doc’s font if set in text runs */
 }
 ul, ol {
   margin: 0.5em 0 0.5em 2em;
@@ -506,9 +589,20 @@ img {
 .section-break {
   page-break-before: always;
 }
+.doc-toc {
+  margin: 1em 0;
+  padding: 1em;
+  border: 1px dashed #666;
+  background: #f9f9f9;
+}
+.doc-toc h2 {
+  margin: 0 0 0.5em 0;
+  font-size: 1.2em;
+  font-weight: bold;
+}
 `);
 
-  // If we have column info, fix content width exactly
+  // If we have colInfo, set the container width precisely
   if (colInfo && colInfo.colWidthPx) {
     const pad = colInfo.colPaddingPx || 0;
     lines.push(`
