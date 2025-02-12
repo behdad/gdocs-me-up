@@ -1,3 +1,5 @@
+Note: The code in this repository, as well as this README, was generated iteratively with ChatGPT o1 and o1pro for my own needs. I have started making manual changes now, and PRs are welcome. Sharing because caring. -behdad
+
 # GDocs-Me-Up: A Google Docs High-Fidelity Exporter
 
 A Node.js script that exports Google Docs to HTML+CSS with high fidelity, preserving essential formatting like headings, line spacing, alignment, bullet lists, images, and more. Perfect for creating an **offline** or **self-hosted** version of your docs that closely matches the original.
