@@ -19,7 +19,6 @@ A Node.js script that exports Google Docs to HTML+CSS with high fidelity, preser
 7. **Bullet/Numbered Lists**: Detects GDocs bullet styles, outputting `<ul>` / `<ol>`. If the doc is RTL, we do `<ul dir="rtl">` so bullets align on the right.  
 8. **Google Fonts**: Gathers unique fonts used in the doc. Inserts a `<link>` to [fonts.googleapis.com](https://fonts.googleapis.com/) so text families match.  
 9. **Neutralized Headings**: Browsers normally inflate `<h3>`. We override heading tags (`h1..h6 { font-size: 1em }`) so Google Docs’ inline style alone sets the final size.  
-10. **Minimal .htaccess**: Writes a `DirectoryIndex index.html`, so your exported folder works out-of-the-box if served by Apache.
 
 ---
 
@@ -53,7 +52,7 @@ node gdocs-me-up.js <DOC_ID> <OUTPUT_DIR>
   https://docs.google.com/document/d/1AbCdE-FgHiJKlMnOpQRs7TuVMue/edit
                 ^^^^^^^^^^^^^^^^^^^^^
   ```
-- **`<OUTPUT_DIR>`**: The folder where the script will write `index.html`, `.htaccess`, and an `images/` subfolder.
+- **`<OUTPUT_DIR>`**: The folder where the script will write `index.html` and an `images/` subfolder.
 
 **Example**:
 
@@ -64,7 +63,6 @@ node gdocs-me-up.js 1AbCdE-FgHiJK docs_export
 On completion:
 - **`docs_export/index.html`**: Your doc in near-pixel HTML+CSS fidelity.  
 - **`docs_export/images/`**: Downloaded images.  
-- **`docs_export/.htaccess`**: Minimal config to make `index.html` default.
 
 Open `docs_export/index.html` in your browser. You’ll see headings, bullet-lists, alignment, images, and more, closely mirroring the original doc.
 
