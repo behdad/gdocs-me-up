@@ -194,7 +194,7 @@ function computeDocContainerWidth(doc) {
     if (usablePts > 0) containerPx = ptToPx(usablePts);
   }
   // small tweak
-  containerPx += 50;
+  containerPx += 64;
   return containerPx;
 }
 
@@ -218,7 +218,7 @@ body {
 .doc-content {
   margin: 1em auto;
   max-width: ${containerPx}px;
-  padding: 0 1em;
+  padding: 2em 1em;
 }
 p, li {
   margin: 0.5em 0;
@@ -244,22 +244,10 @@ img {
   page-break-before: always;
 }
 
-/* Table of contents, hierarchical indentation */
 .doc-toc {
   margin: 0.5em 0;
   padding: 0.5em;
-  border: 1px dashed #666;
-  background: #f9f9f9;
 }
-.doc-toc h2 {
-  margin: 0 0 0.3em 0;
-  font-size: 1.2em;
-  font-weight: bold;
-}
-.doc-toc .toc-level-1 { margin-left: 0; }
-.doc-toc .toc-level-2 { margin-left: 1em; }
-.doc-toc .toc-level-3 { margin-left: 2em; }
-.doc-toc .toc-level-4 { margin-left: 3em; }
 
 .doc-subtitle {
   display: block;
@@ -301,7 +289,7 @@ async function renderTableOfContents(
   outputDir,
   namedStylesMap
 ) {
-  let html = '<div class="doc-toc">\n<h2>Table of Contents</h2>\n';
+  let html = '<div class="doc-toc">\n';
 
   if (toc.content) {
     for (const c of toc.content) {
@@ -417,7 +405,8 @@ async function renderParagraph(
     inlineStyle += `text-align:${alignmentMapLTR[align]};`;
   }
   if(mergedParaStyle.lineSpacing){
-    const ls=mergedParaStyle.lineSpacing/100;
+    // browsers default to 1.2; empirically 1.25 matches docs
+    const ls=mergedParaStyle.lineSpacing*1.25/100;
     inlineStyle += `line-height:${ls};`;
   }
   if(mergedParaStyle.spaceAbove?.magnitude){
