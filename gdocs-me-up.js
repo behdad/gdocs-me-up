@@ -93,6 +93,7 @@ async function exportDocToHTML(docId, outputDir) {
   htmlLines.push('<html lang="en">');
   htmlLines.push('<head>');
   htmlLines.push('  <meta charset="UTF-8">');
+  htmlLines.push('  <meta name="viewport" content="width=device-width">');
   htmlLines.push(`  <title>${escapeHtml(doc.title)}</title>`);
   htmlLines.push('  <style>');
   htmlLines.push(globalCSS);
