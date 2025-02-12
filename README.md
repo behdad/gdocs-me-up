@@ -1,6 +1,6 @@
-# Google Docs High-Fidelity Export
+# GDocs-Me-Up: A Google Docs High-Fidelity Exporter
 
-A Node.js script that exports Google Docs to HTML+CSS with **near-pixel fidelity**, preserving essential formatting like headings, line spacing, alignment, bullet lists, images, and more. Perfect for creating an **offline** or **self-hosted** version of your docs that closely matches the original.
+A Node.js script that exports Google Docs to HTML+CSS with high fidelity, preserving essential formatting like headings, line spacing, alignment, bullet lists, images, and more. Perfect for creating an **offline** or **self-hosted** version of your docs that closely matches the original.
 
 ---
 
@@ -32,7 +32,7 @@ A Node.js script that exports Google Docs to HTML+CSS with **near-pixel fidelity
 
 2. **Get the Script**:
    - Download or clone this repository.
-   - Ensure `google-docs-high-fidelity-export.js` and your `service_account.json` are in the same folder (or update the path in the script).
+   - Ensure `gdocs-me-up.js` and your `service_account.json` are in the same folder (or update the path in the script).
 
 3. **Authenticate**:
    - Go to [Google Cloud Console](https://console.cloud.google.com/), enable **Docs API** + **Drive API**.
@@ -45,7 +45,7 @@ A Node.js script that exports Google Docs to HTML+CSS with **near-pixel fidelity
 ## Usage
 
 ```bash
-node google-docs-high-fidelity-export.js <DOC_ID> <OUTPUT_DIR>
+node gdocs-me-up.js <DOC_ID> <OUTPUT_DIR>
 ```
 
 - **`<DOC_ID>`**: The unique ID from your doc’s URL. For example:
@@ -58,7 +58,7 @@ node google-docs-high-fidelity-export.js <DOC_ID> <OUTPUT_DIR>
 **Example**:
 
 ```bash
-node google-docs-high-fidelity-export.js 1AbCdE-FgHiJK docs_export
+node gdocs-me-up.js 1AbCdE-FgHiJK docs_export
 ```
 
 On completion:
@@ -118,7 +118,7 @@ Open `docs_export/index.html` in your browser. You’ll see headings, bullet-lis
 **Command**:
 
 ```bash
-node google-docs-high-fidelity-export.js 1XYZabc docs_export
+node gdocs-me-up.js 1XYZabc docs_export
 ```
 
 **Result**:
@@ -140,4 +140,4 @@ We welcome improvements or bug fixes. This script is licensed under **MIT**, so 
 
 ---
 
-**Thanks** for checking out **Google Docs High-Fidelity Export**! We hope it helps you create accurate offline or self-hosted versions of your docs. If you have suggestions, issues, or ideas, please open an issue or PR. Happy exporting!
+**Thanks** for checking out **GDocs-Me-Up**! We hope it helps you create accurate offline or self-hosted versions of your docs. If you have suggestions, issues, or ideas, please open an issue or PR. Happy exporting!
