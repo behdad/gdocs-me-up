@@ -249,7 +249,7 @@ img {
   padding: 0.5em;
 }
 
-.doc-subtitle {
+.subtitle {
   display: block;
   white-space: pre-wrap;
 }
@@ -377,12 +377,12 @@ async function renderParagraph(
     }
   }
 
-  // Title => <h1>, Subtitle => <h2 class="doc-subtitle">, heading => <hX>, else <p>
+  // Title => <h1 class="title">, Subtitle => <h2 class="subtitle">, heading => <hX>, else <p>
   let tag='p';
   if(namedType==='TITLE'){
-    tag='h1';
+    tag='h1 class="title"';
   } else if(namedType==='SUBTITLE'){
-    tag='h2 class="doc-subtitle"';
+    tag='h2 class="subtitle"';
   } else if(namedType.startsWith('HEADING_')){
     const lv=parseInt(namedType.replace('HEADING_',''),10);
     if(lv>=1 && lv<=6) tag=`h${lv}`;
