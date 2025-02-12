@@ -27,7 +27,6 @@
  *    https://fonts.googleapis.com for a near-pixel match to the doc’s text families.
  *  - **Merging Text Runs**: Consecutive text runs with identical styling are combined
  *    into a single <span> to avoid excessive markup.
- *  - **.htaccess**: Writes a minimal `.htaccess` with `DirectoryIndex index.html`.
  *  - **Service Account Auth**: Reads from `SERVICE_ACCOUNT_KEY_FILE`, or adapt to your
  *    auth method. Requires the doc to be accessible with the given credentials.
  *
@@ -179,10 +178,6 @@ async function exportDocToHTML(docId, outputDir) {
   const indexPath = path.join(outputDir, 'index.html');
   fs.writeFileSync(indexPath, htmlLines.join('\n'), 'utf8');
   console.log(`HTML exported to: ${indexPath}`);
-
-  // Write .htaccess
-  fs.writeFileSync(path.join(outputDir, '.htaccess'), 'DirectoryIndex index.html\n', 'utf8');
-  console.log(`.htaccess written to: ${path.join(outputDir, '.htaccess')}`);
 }
 
 // -----------------------------------------------------
