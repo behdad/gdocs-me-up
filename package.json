@@ -1,6 +1,7 @@
 {
   "dependencies": {
     "axios": "^1.7.9",
-    "googleapis": "^144.0.0"
+    "googleapis": "^144.0.0",
+    "package.json": "^2.0.1"
   }
 }
