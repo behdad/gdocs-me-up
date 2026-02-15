@@ -1143,10 +1143,20 @@ function detectListChange(paragraph, doc, listStack, isRTL, prevLevel, prevListI
   return null;
 }
 
+/**
+ * Handle list state transitions by processing list change actions.
+ * Actions can be: startUL:0, startOL_RTL:1, startUL_DASH:0, endLIST, endUL, etc.
+ *
+ * @param {string} listChange - Pipe-separated list of actions
+ * @param {Array} listStack - Stack tracking open lists
+ * @param {Array} htmlLines - Array of HTML lines being built
+ */
 function handleListState(listChange, listStack, htmlLines){
-  const actions=listChange.split('|');
-  for(const action of actions){
-    if(action.startsWith('start')){
+  if (!listChange) return;
+
+  const actions = listChange.split('|');
+  for (const action of actions) {
+    if (action.startsWith('start')) {
       // Extract type and level (format: "startUL:0", "startOL_RTL:1", "startUL_DASH:0")
       const parts = action.split(':');
       const typeInfo = parts[0].replace('start', '');
@@ -1201,10 +1211,19 @@ function handleListState(listChange, listStack, htmlLines){
     }
   }
 }
-function closeAllLists(listStack,htmlLines){
-  while(listStack.length>0){
-    const top=listStack.pop();
-    if(top.startsWith('u')) htmlLines.push('</ul>');
+/**
+ * Close all open lists in the stack.
+ *
+ * @param {Array} listStack - Stack of open lists
+ * @param {Array} htmlLines - Array of HTML lines being built
+ */
+function closeAllLists(listStack, htmlLines){
+  if (!listStack || !htmlLines) return;
+
+  while (listStack.length > 0) {
+    const top = listStack.pop();
+    if (!top) continue;
+    if (top.startsWith('u')) htmlLines.push('</ul>');
     else htmlLines.push('</ol>');
   }
 }
@@ -1212,6 +1231,18 @@ function closeAllLists(listStack,htmlLines){
 // -----------------------------------------------------
 // 9) Table
 // -----------------------------------------------------
+/**
+ * Render a Google Docs table to HTML.
+ *
+ * @param {object} table - The table element from Google Docs
+ * @param {object} doc - The full document object
+ * @param {Set} usedFonts - Set to track used fonts
+ * @param {object} authClient - Auth client for API calls
+ * @param {string} outputDir - Output directory path
+ * @param {string} imagesDir - Images directory path
+ * @param {object} namedStylesMap - Map of named styles
+ * @returns {Promise<string>} HTML string for the table
+ */
 async function renderTable(
   table,
   doc,
@@ -1221,8 +1252,11 @@ async function renderTable(
   imagesDir,
   namedStylesMap
 ){
-  let html='<table class="doc-table" style="border-collapse:collapse;">';
-  for(const row of table.tableRows||[]){
+  if (!table) return '';
+
+  try {
+    let html = '<table class="doc-table" style="border-collapse:collapse;">';
+    for (const row of table.tableRows || []) {
     // Row styling
     let rowStyle = '';
     if(row.tableCellStyle?.backgroundColor?.color?.rgbColor){
@@ -1308,10 +1342,14 @@ async function renderTable(
       }
       html+='</td>';
     }
-    html+='</tr>';
+      html += '</tr>';
+    }
+    html += '</table>';
+    return html;
+  } catch (error) {
+    console.error('Error rendering table:', error.message);
+    return '<!-- Table rendering failed -->';
   }
-  html+='</table>';
-  return html;
 }
 
 // -----------------------------------------------------
@@ -1390,12 +1428,31 @@ function escapeHtml(str){
     .replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;');
 }
+/**
+ * Convert points to pixels (1pt ≈ 1.3333px).
+ *
+ * @param {number} pts - Points value
+ * @returns {number} Pixels value
+ */
 function ptToPx(pts){
-  return Math.round(pts*1.3333);
+  if (typeof pts !== 'number' || isNaN(pts)) return 0;
+  return Math.round(pts * 1.3333);
 }
-function rgbToHex(r,g,b){
-  const nr=Math.round(r*255), ng=Math.round(g*255), nb=Math.round(b*255);
-  return '#'+[nr,ng,nb].map(x=>x.toString(16).padStart(2,'0')).join('');
+
+/**
+ * Convert RGB values (0-1 range) to hex color.
+ *
+ * @param {number} r - Red (0-1)
+ * @param {number} g - Green (0-1)
+ * @param {number} b - Blue (0-1)
+ * @returns {string} Hex color string
+ */
+function rgbToHex(r, g, b){
+  const clamp = (val) => Math.max(0, Math.min(1, val || 0));
+  const nr = Math.round(clamp(r) * 255);
+  const ng = Math.round(clamp(g) * 255);
+  const nb = Math.round(clamp(b) * 255);
+  return '#' + [nr, ng, nb].map(x => x.toString(16).padStart(2, '0')).join('');
 }
 function buildGoogleFontsLink(fontFamilies){
   if(!fontFamilies||fontFamilies.length===0)return'';
