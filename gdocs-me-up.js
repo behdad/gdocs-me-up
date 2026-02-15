@@ -301,6 +301,10 @@ img {
   margin: 0.5em 0;
   padding: 0.5em;
 }
+.doc-toc p {
+  margin: 0.25em 0;
+  line-height: 1.3;
+}
 
 .subtitle {
   display: block;
