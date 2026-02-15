@@ -126,9 +126,25 @@ async function exportDocToHTML(docId, outputDir) {
   htmlLines.push('<body>');
   htmlLines.push('<div class="doc-content">');
 
+  // Pre-process: count items per list per level to determine if single-item (numbered) or multi-item (bullets)
+  const listItemCounts = {};
+  const bodyContent = doc.body?.content || [];
+  for (const element of bodyContent) {
+    if (element.paragraph?.bullet) {
+      const bullet = element.paragraph.bullet;
+      const level = bullet.nestingLevel ?? 0;
+      const listId = bullet.listId;
+      const key = `${listId}:${level}`;
+      listItemCounts[key] = (listItemCounts[key] || 0) + 1;
+    }
+  }
+
+  // Store counts in doc object for use by detectListChange
+  doc.___listItemCounts = listItemCounts;
+
   let listStack = [];  // Array of {type: 'ul'/'ol', level: 0/1/2...}
   let prevNestingLevel = -1;
-  const bodyContent = doc.body?.content || [];
+  let prevListId = null;  // Track previous listId to detect list changes
 
   for (const element of bodyContent) {
     if (element.sectionBreak) {
@@ -162,10 +178,11 @@ async function exportDocToHTML(docId, outputDir) {
       continue;
     }
     if (element.paragraph) {
-      const nestingLevel = element.paragraph.bullet?.nestingLevel ?? -1;
+      const nestingLevel = element.paragraph.bullet ? (element.paragraph.bullet.nestingLevel ?? 0) : -1;
 
-      // Pass previous nesting level to detectListChange
+      // Pass previous nesting level and listId to detectListChange
       element.paragraph.___prevNestingLevel = prevNestingLevel;
+      element.paragraph.___prevListId = prevListId;
 
       // Close previous <li> if nesting level is changing
       if (prevNestingLevel >= 0 && prevNestingLevel < nestingLevel) {
@@ -192,12 +209,14 @@ async function exportDocToHTML(docId, outputDir) {
       if (listStack.length > 0) {
         htmlLines.push(`<li>${html}`);
         prevNestingLevel = nestingLevel;
+        prevListId = element.paragraph.bullet?.listId || null;
       } else {
         // Not in a list, close any open <li>
         if (prevNestingLevel >= 0) {
           htmlLines.push('</li>');
           prevNestingLevel = -1;
         }
+        prevListId = null;
         htmlLines.push(html);
       }
       continue;
@@ -505,9 +524,10 @@ async function renderParagraph(
   const currentNestingLevel = paragraph.bullet?.nestingLevel ?? -1;
   let listChange=null;
   if (paragraph.bullet) {
-    // prevNestingLevel is passed from the main loop
+    // prevNestingLevel and prevListId are passed from the main loop
     const prevLevel = paragraph.___prevNestingLevel ?? -1;
-    listChange=detectListChange(paragraph.bullet,doc,listStack,isRTL,prevLevel);
+    const prevListId = paragraph.___prevListId;
+    listChange=detectListChange(paragraph.bullet,doc,listStack,isRTL,prevLevel,prevListId);
   } else {
     if(listStack.length>0){
       // Exiting all lists
@@ -866,23 +886,39 @@ async function renderInlineObject(objectId, doc, authClient, outputDir, imagesDi
 // -----------------------------------------------------
 // 8) Lists
 // -----------------------------------------------------
-function detectListChange(bullet, doc, listStack, isRTL, prevLevel){
+function detectListChange(bullet, doc, listStack, isRTL, prevLevel, prevListId){
   const listId=bullet.listId;
   const nestingLevel=bullet.nestingLevel||0;
   const listDef=doc.lists?.[listId];
   if(!listDef?.listProperties?.nestingLevels)return null;
 
   const glyph=listDef.listProperties.nestingLevels[nestingLevel];
-  // Detect if numbered list:
-  // - Bullet lists have glyphSymbol (●, ○, -, etc.)
-  // - Numbered lists have glyphType: DECIMAL, ALPHA, ROMAN, UPPER_ALPHA, UPPER_ROMAN, etc.
+  // Detect list type:
+  // - If glyphSymbol is present (●, ○, -, etc.) → bullet list
+  // - If glyphType is explicitly DECIMAL, ALPHA, ROMAN, etc. → numbered list
+  // - If GLYPH_TYPE_UNSPECIFIED:
+  //   - Single-item lists (1 item at level 0) → numbered (section markers)
+  //   - Multi-item lists (multiple items at level 0) → bullets
   const isBullet = glyph?.glyphSymbol !== undefined;
-  const numberedTypes = ['DECIMAL', 'ALPHA', 'ROMAN', 'UPPER_ALPHA', 'UPPER_ROMAN',
-                         'LOWER_ALPHA', 'LOWER_ROMAN', 'GLYPH_TYPE_UNSPECIFIED'];
-  const isNumbered = !isBullet && (
-    numberedTypes.includes(glyph?.glyphType) ||
-    glyph?.glyphType?.toLowerCase().includes('number')
-  );
+  const explicitlyNumbered = ['DECIMAL', 'ALPHA', 'ROMAN', 'UPPER_ALPHA', 'UPPER_ROMAN',
+                               'LOWER_ALPHA', 'LOWER_ROMAN'].includes(glyph?.glyphType);
+
+  let isNumbered;
+  if (isBullet) {
+    isNumbered = false;
+  } else if (explicitlyNumbered) {
+    isNumbered = true;
+  } else if (glyph?.glyphType === 'GLYPH_TYPE_UNSPECIFIED') {
+    // Check if this is a single-item list (numbered) or multi-item list (bullets)
+    // Count items at THIS nesting level
+    const key = `${listId}:${nestingLevel}`;
+    const itemCount = doc.___listItemCounts?.[key] || 1;
+    isNumbered = (itemCount === 1);
+  } else {
+    // Default to bullet list
+    isNumbered = false;
+  }
+
   const startType=isNumbered?'OL':'UL';
   const rtlFlag=isRTL?'_RTL':'';
 
@@ -901,13 +937,30 @@ function detectListChange(bullet, doc, listStack, isRTL, prevLevel){
     for(let i = prevLevel; i > nestingLevel; i--){
       actions.push(`endLIST`);
     }
+
+    // After closing nested lists, check if we need to switch lists at current level
+    // The listStack will have (prevLevel - nestingLevel) fewer items after closing
+    const stackIndexAfterClosing = listStack.length - (prevLevel - nestingLevel);
+    if(stackIndexAfterClosing > 0){
+      const parentType = listStack[stackIndexAfterClosing - 1]?.split(':')[0];
+      const wantType = startType.toLowerCase() + (isRTL ? '_rtl' : '');
+
+      // Check if parent list type or listId changed
+      if(parentType !== wantType || (prevListId && prevListId !== listId)){
+        actions.push(`end${parentType?.toUpperCase() || 'UL'}`);
+        actions.push(`start${startType}${rtlFlag}:${nestingLevel}`);
+      }
+    }
+
     return actions.join('|');
   }
 
-  // Same level - check if list type changed
+  // Same level - check if list type or listId changed
   const currentType = listStack[listStack.length - 1]?.split(':')[0];
   const wantType = startType.toLowerCase() + (isRTL ? '_rtl' : '');
-  if(currentType !== wantType){
+
+  // Check if list type changed OR if listId changed
+  if(currentType !== wantType || (prevListId && prevListId !== listId)){
     return `end${currentType?.toUpperCase() || 'UL'}|start${startType}${rtlFlag}:${nestingLevel}`;
   }
 
@@ -940,8 +993,11 @@ function handleListState(listChange, listStack, htmlLines){
       const top=listStack.pop();
       if(!top) continue;
       const listType = top.split(':')[0];
+      // Close the nested list
       if(listType.startsWith('u')) htmlLines.push('</ul>');
       else htmlLines.push('</ol>');
+      // Close the parent <li> that contained the nested list
+      htmlLines.push('</li>');
     } else if(action.startsWith('end')){
       const top=listStack.pop();
       if(!top) continue;
