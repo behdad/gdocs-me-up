@@ -268,7 +268,7 @@ body {
 }
 p, li {
   margin: 0.5em 0;
-  line-height: 1.5;
+  line-height: 1.4;
 }
 img {
   display: inline-block;
@@ -302,8 +302,8 @@ img {
   padding: 0.5em;
 }
 .doc-toc p {
-  margin: 0.25em 0;
-  line-height: 1.3;
+  margin: 0.1em 0;
+  line-height: 1.2;
 }
 
 .subtitle {
@@ -516,8 +516,8 @@ async function renderParagraph(
   }
   if(mergedParaStyle.lineSpacing){
     // Google Docs lineSpacing as direct percentage
-    // Base line-height is 1.5 (set in CSS), this overrides when specified
-    const ls=mergedParaStyle.lineSpacing*1.5/100;
+    // Base line-height is 1.4 (set in CSS), this overrides when specified
+    const ls=mergedParaStyle.lineSpacing*1.4/100;
     inlineStyle += `line-height:${ls};`;
   }
   if(mergedParaStyle.spaceAbove?.magnitude){
