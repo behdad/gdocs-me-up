@@ -73,6 +73,18 @@ const { google } = require('googleapis');
 const SERVICE_ACCOUNT_KEY_FILE = 'service_account.json';
 const EMBED_IMAGES_AS_BASE64 = false;
 
+// ------------- CONSTANTS -------------
+// Indentation thresholds for inferring nesting levels (in points)
+const INDENT_LEVEL_0_MAX = 40;  // Items with indent <= 40pt are level 0
+const INDENT_LEVEL_1_MIN = 60;  // Items with indent >= 60pt are level 1
+
+// List glyph types
+const NUMBERED_GLYPH_TYPES = [
+  'DECIMAL', 'ALPHA', 'ROMAN',
+  'UPPER_ALPHA', 'UPPER_ROMAN',
+  'LOWER_ALPHA', 'LOWER_ROMAN'
+];
+
 // Basic alignment map for LTR paragraphs
 const alignmentMapLTR = {
   START: 'left',
@@ -89,16 +101,143 @@ const borderStyleMap = {
   DOUBLE: 'double'
 };
 
-async function exportDocToHTML(docId, outputDir) {
-  fs.mkdirSync(outputDir, { recursive: true });
-  const imagesDir = path.join(outputDir, 'images');
-  fs.mkdirSync(imagesDir, { recursive: true });
+// Bullet style mappings
+const BULLET_STYLE_MAP = {
+  '●': 'disc',
+  '○': 'circle',
+  '■': 'square',
+  '-': 'dash'
+};
 
-  // Auth & fetch doc
-  const authClient = await getAuthClient();
-  const docs = google.docs({ version: 'v1', auth: authClient });
-  const { data: doc } = await docs.documents.get({ documentId: docId });
-  console.log(`Exporting doc: ${doc.title}`);
+// Number style mappings
+const NUMBER_STYLE_MAP = {
+  'DECIMAL': 'decimal',
+  'UPPER_ALPHA': 'upper-alpha',
+  'LOWER_ALPHA': 'lower-alpha',
+  'ALPHA': 'lower-alpha',
+  'UPPER_ROMAN': 'upper-roman',
+  'ROMAN': 'upper-roman',
+  'LOWER_ROMAN': 'lower-roman'
+};
+
+// ------------- HELPER FUNCTIONS -------------
+
+/**
+ * Infer nesting level when not explicitly provided by the API.
+ * Uses indentation as a signal to determine the correct level.
+ *
+ * @param {object} bullet - The bullet object from the paragraph
+ * @param {object} paragraphStyle - The paragraph style containing indentStart
+ * @param {number} prevLevel - The previous item's nesting level
+ * @returns {number} The inferred nesting level
+ */
+function inferNestingLevel(bullet, paragraphStyle, prevLevel) {
+  if (bullet?.nestingLevel !== undefined) {
+    return bullet.nestingLevel;
+  }
+
+  const indentStart = paragraphStyle?.indentStart?.magnitude || 0;
+
+  // Use indentation heuristics
+  if (indentStart <= INDENT_LEVEL_0_MAX) {
+    return 0;
+  } else if (indentStart >= INDENT_LEVEL_1_MIN) {
+    return 1;
+  }
+
+  // Fallback: continue at previous level if in a list
+  return (prevLevel >= 0) ? prevLevel : 0;
+}
+
+/**
+ * Safely get a value with a default fallback.
+ *
+ * @param {*} value - The value to check
+ * @param {*} defaultValue - The default value to return if value is null/undefined
+ * @returns {*} The value or default
+ */
+function getOrDefault(value, defaultValue) {
+  return (value !== undefined && value !== null) ? value : defaultValue;
+}
+
+/**
+ * Detect the bullet style for an unordered list.
+ *
+ * @param {object} glyph - The glyph definition from list properties
+ * @returns {string} The bullet style name (disc, circle, square, dash)
+ */
+function detectBulletStyle(glyph) {
+  if (!glyph?.glyphSymbol) return 'disc';
+  return BULLET_STYLE_MAP[glyph.glyphSymbol] || 'disc';
+}
+
+/**
+ * Detect the numbering style for an ordered list.
+ *
+ * @param {object} glyph - The glyph definition from list properties
+ * @returns {string} The numbering style name (decimal, upper-alpha, etc.)
+ */
+function detectNumberStyle(glyph) {
+  if (!glyph?.glyphType) return 'decimal';
+  return NUMBER_STYLE_MAP[glyph.glyphType] || 'decimal';
+}
+
+/**
+ * Determine if a list is numbered based on glyph properties and item counts.
+ *
+ * @param {object} glyph - The glyph definition from list properties
+ * @param {string} listId - The list identifier
+ * @param {number} nestingLevel - The nesting level
+ * @param {object} listItemCounts - The item count map
+ * @returns {boolean} True if the list is numbered
+ */
+function isNumberedList(glyph, listId, nestingLevel, listItemCounts) {
+  // If glyphSymbol is present (●, ○, -, etc.) → bullet list
+  const isBullet = glyph?.glyphSymbol !== undefined;
+  if (isBullet) return false;
+
+  // If glyphType is explicitly a numbered type → numbered list
+  const explicitlyNumbered = NUMBERED_GLYPH_TYPES.includes(glyph?.glyphType);
+  if (explicitlyNumbered) return true;
+
+  // If GLYPH_TYPE_UNSPECIFIED: use item count heuristic
+  // Single-item lists → numbered (section markers)
+  // Multi-item lists → bullets
+  if (glyph?.glyphType === 'GLYPH_TYPE_UNSPECIFIED') {
+    const key = `${listId}:${nestingLevel}`;
+    const itemCount = listItemCounts?.[key] || 1;
+    return (itemCount === 1);
+  }
+
+  // Default to bullet list
+  return false;
+}
+
+async function exportDocToHTML(docId, outputDir) {
+  try {
+    // Validate inputs
+    if (!docId || typeof docId !== 'string') {
+      throw new Error('Invalid document ID provided');
+    }
+    if (!outputDir || typeof outputDir !== 'string') {
+      throw new Error('Invalid output directory provided');
+    }
+
+    // Create output directories
+    fs.mkdirSync(outputDir, { recursive: true });
+    const imagesDir = path.join(outputDir, 'images');
+    fs.mkdirSync(imagesDir, { recursive: true });
+
+    // Auth & fetch doc
+    const authClient = await getAuthClient();
+    const docs = google.docs({ version: 'v1', auth: authClient });
+    const { data: doc } = await docs.documents.get({ documentId: docId });
+
+    if (!doc) {
+      throw new Error('Failed to fetch document from Google Docs API');
+    }
+
+    console.log(`Exporting doc: ${doc.title || 'Untitled'}`);
 
   // Named styles for Title, Subtitle, Headings, etc.
   const namedStylesMap = buildNamedStylesMap(doc);
@@ -127,28 +266,14 @@ async function exportDocToHTML(docId, outputDir) {
   htmlLines.push('<div class="doc-content">');
 
   // Pre-process: count items per list per level to determine if single-item (numbered) or multi-item (bullets)
-  // Need to infer nestingLevel during preprocessing too
   const listItemCounts = {};
   const bodyContent = doc.body?.content || [];
   let prevLevel = -1;
+
   for (const element of bodyContent) {
     if (element.paragraph?.bullet) {
       const bullet = element.paragraph.bullet;
-      // Infer nestingLevel: use indentStart as a signal
-      let level = bullet.nestingLevel;
-      if (level === undefined) {
-        const indentStart = element.paragraph.paragraphStyle?.indentStart?.magnitude || 0;
-        // Heuristic based on observed indent values:
-        // 36pt or less → level 0, 72pt → level 1
-        if (indentStart <= 40) {
-          level = 0;
-        } else if (indentStart >= 60) {
-          level = 1;
-        } else {
-          // Fallback: continue at previous level if in a list
-          level = (prevLevel >= 0 ? prevLevel : 0);
-        }
-      }
+      const level = inferNestingLevel(bullet, element.paragraph.paragraphStyle, prevLevel);
       const listId = bullet.listId;
       const key = `${listId}:${level}`;
       listItemCounts[key] = (listItemCounts[key] || 0) + 1;
@@ -197,23 +322,10 @@ async function exportDocToHTML(docId, outputDir) {
       continue;
     }
     if (element.paragraph) {
-      // Infer nesting level using indentStart as a signal
-      let nestingLevel = -1;
-      if (element.paragraph.bullet) {
-        nestingLevel = element.paragraph.bullet.nestingLevel;
-        if (nestingLevel === undefined) {
-          const indentStart = element.paragraph.paragraphStyle?.indentStart?.magnitude || 0;
-          // Heuristic: 36pt or less → level 0, 72pt → level 1
-          if (indentStart <= 40) {
-            nestingLevel = 0;
-          } else if (indentStart >= 60) {
-            nestingLevel = 1;
-          } else {
-            // Fallback: continue at previous level if in a list
-            nestingLevel = (prevNestingLevel >= 0 ? prevNestingLevel : 0);
-          }
-        }
-      }
+      // Infer nesting level using helper function
+      const nestingLevel = element.paragraph.bullet
+        ? inferNestingLevel(element.paragraph.bullet, element.paragraph.paragraphStyle, prevNestingLevel)
+        : -1;
 
       // Pass previous nesting level and listId to detectListChange
       element.paragraph.___prevNestingLevel = prevNestingLevel;
@@ -228,31 +340,36 @@ async function exportDocToHTML(docId, outputDir) {
         htmlLines.push('</li>');
       }
 
-      const { html, listChange } = await renderParagraph(
-        element.paragraph,
-        doc,
-        usedFonts,
-        listStack,
-        authClient,
-        outputDir,
-        imagesDir,
-        namedStylesMap
-      );
-      if (listChange) {
-        handleListState(listChange, listStack, htmlLines);
-      }
-      if (listStack.length > 0) {
-        htmlLines.push(`<li>${html}`);
-        prevNestingLevel = nestingLevel;
-        prevListId = element.paragraph.bullet?.listId || null;
-      } else {
-        // Not in a list, close any open <li>
-        if (prevNestingLevel >= 0) {
-          htmlLines.push('</li>');
-          prevNestingLevel = -1;
+      try {
+        const { html, listChange } = await renderParagraph(
+          element.paragraph,
+          doc,
+          usedFonts,
+          listStack,
+          authClient,
+          outputDir,
+          imagesDir,
+          namedStylesMap
+        );
+        if (listChange) {
+          handleListState(listChange, listStack, htmlLines);
         }
-        prevListId = null;
-        htmlLines.push(html);
+        if (listStack.length > 0) {
+          htmlLines.push(`<li>${html}`);
+          prevNestingLevel = nestingLevel;
+          prevListId = element.paragraph.bullet?.listId || null;
+        } else {
+          // Not in a list, close any open <li>
+          if (prevNestingLevel >= 0) {
+            htmlLines.push('</li>');
+            prevNestingLevel = -1;
+          }
+          prevListId = null;
+          htmlLines.push(html);
+        }
+      } catch (error) {
+        console.error('Error rendering paragraph:', error.message);
+        // Continue processing remaining elements
       }
       continue;
     }
@@ -296,10 +413,23 @@ async function exportDocToHTML(docId, outputDir) {
     }
   }
 
-  // Write index.html
-  const indexPath = path.join(outputDir, 'index.html');
-  fs.writeFileSync(indexPath, htmlLines.join('\n'), 'utf8');
-  console.log(`HTML exported to: ${indexPath}`);
+    // Write index.html
+    const indexPath = path.join(outputDir, 'index.html');
+    fs.writeFileSync(indexPath, htmlLines.join('\n'), 'utf8');
+    console.log(`HTML exported to: ${indexPath}`);
+  } catch (error) {
+    console.error('Export failed:', error.message);
+    if (error.code === 'ENOENT') {
+      console.error('File not found. Check your service account key file path.');
+    } else if (error.code === 'EACCES') {
+      console.error('Permission denied. Check file/directory permissions.');
+    } else if (error.response?.status === 404) {
+      console.error('Document not found. Check the document ID and access permissions.');
+    } else if (error.response?.status === 403) {
+      console.error('Access forbidden. Ensure the service account has access to the document.');
+    }
+    throw error;
+  }
 }
 
 // -----------------------------------------------------
@@ -542,8 +672,12 @@ async function renderParagraph(
   imagesDir,
   namedStylesMap
 ) {
-  const style = paragraph.paragraphStyle||{};
-  const namedType = style.namedStyleType||'NORMAL_TEXT';
+  if (!paragraph) {
+    return { html: '', listChange: null };
+  }
+
+  const style = paragraph.paragraphStyle || {};
+  const namedType = style.namedStyleType || 'NORMAL_TEXT';
 
   // Merge doc-based style
   let mergedParaStyle={};
@@ -923,75 +1057,28 @@ async function renderInlineObject(objectId, doc, authClient, outputDir, imagesDi
 // -----------------------------------------------------
 function detectListChange(paragraph, doc, listStack, isRTL, prevLevel, prevListId){
   const bullet = paragraph.bullet;
-  const listId=bullet.listId;
-  // Infer nestingLevel using indentStart as a signal
-  let nestingLevel = bullet.nestingLevel;
-  if (nestingLevel === undefined) {
-    const indentStart = paragraph.paragraphStyle?.indentStart?.magnitude || 0;
-    // Heuristic: 36pt or less → level 0, 72pt → level 1
-    if (indentStart <= 40) {
-      nestingLevel = 0;
-    } else if (indentStart >= 60) {
-      nestingLevel = 1;
-    } else {
-      // Fallback: continue at previous level if in a list
-      nestingLevel = (prevLevel >= 0 ? prevLevel : 0);
-    }
-  }
-  const listDef=doc.lists?.[listId];
-  if(!listDef?.listProperties?.nestingLevels)return null;
+  if (!bullet) return null;
 
-  const glyph=listDef.listProperties.nestingLevels[nestingLevel];
-  // Detect list type:
-  // - If glyphSymbol is present (●, ○, -, etc.) → bullet list
-  // - If glyphType is explicitly DECIMAL, ALPHA, ROMAN, etc. → numbered list
-  // - If GLYPH_TYPE_UNSPECIFIED:
-  //   - Single-item lists (1 item at level 0) → numbered (section markers)
-  //   - Multi-item lists (multiple items at level 0) → bullets
-  const isBullet = glyph?.glyphSymbol !== undefined;
-  const explicitlyNumbered = ['DECIMAL', 'ALPHA', 'ROMAN', 'UPPER_ALPHA', 'UPPER_ROMAN',
-                               'LOWER_ALPHA', 'LOWER_ROMAN'].includes(glyph?.glyphType);
+  const listId = bullet.listId;
+  const nestingLevel = inferNestingLevel(bullet, paragraph.paragraphStyle, prevLevel);
 
-  let isNumbered;
-  if (isBullet) {
-    isNumbered = false;
-  } else if (explicitlyNumbered) {
-    isNumbered = true;
-  } else if (glyph?.glyphType === 'GLYPH_TYPE_UNSPECIFIED') {
-    // Check if this is a single-item list (numbered) or multi-item list (bullets)
-    // Count items at THIS nesting level
-    const key = `${listId}:${nestingLevel}`;
-    const itemCount = doc.___listItemCounts?.[key] || 1;
-    isNumbered = (itemCount === 1);
-  } else {
-    // Default to bullet list
-    isNumbered = false;
-  }
+  const listDef = doc.lists?.[listId];
+  if (!listDef?.listProperties?.nestingLevels) return null;
 
-  // Detect bullet style for unordered lists
-  let bulletStyle = 'disc'; // default
-  if (!isNumbered && glyph?.glyphSymbol) {
-    const symbol = glyph.glyphSymbol;
-    if (symbol === '●') bulletStyle = 'disc';
-    else if (symbol === '○') bulletStyle = 'circle';
-    else if (symbol === '■') bulletStyle = 'square';
-    else if (symbol === '-') bulletStyle = 'dash';
-  }
+  const glyph = listDef.listProperties.nestingLevels[nestingLevel];
+  if (!glyph) return null;
 
-  // Detect numbering style for ordered lists
-  let numberStyle = 'decimal'; // default
-  if (isNumbered && glyph?.glyphType) {
-    const type = glyph.glyphType;
-    if (type === 'DECIMAL') numberStyle = 'decimal';
-    else if (type === 'UPPER_ALPHA') numberStyle = 'upper-alpha';
-    else if (type === 'LOWER_ALPHA' || type === 'ALPHA') numberStyle = 'lower-alpha';
-    else if (type === 'UPPER_ROMAN' || type === 'ROMAN') numberStyle = 'upper-roman';
-    else if (type === 'LOWER_ROMAN') numberStyle = 'lower-roman';
-  }
+  // Determine if this is a numbered or bullet list
+  const isNumbered = isNumberedList(glyph, listId, nestingLevel, doc.___listItemCounts);
 
-  const startType=isNumbered?'OL':'UL';
-  const rtlFlag=isRTL?'_RTL':'';
-  const styleFlag=isNumbered
+  // Detect the specific style
+  const bulletStyle = isNumbered ? null : detectBulletStyle(glyph);
+  const numberStyle = isNumbered ? detectNumberStyle(glyph) : null;
+
+  // Build the list type identifier
+  const startType = isNumbered ? 'OL' : 'UL';
+  const rtlFlag = isRTL ? '_RTL' : '';
+  const styleFlag = isNumbered
     ? (numberStyle !== 'decimal' ? `_${numberStyle.toUpperCase().replace(/-/g, '_')}` : '')
     : (bulletStyle !== 'disc' ? `_${bulletStyle.toUpperCase()}` : '');
 
