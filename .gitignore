@@ -8,6 +8,7 @@ node_modules/
 tests/visual/output/
 tests/visual/analysis/
 tests/visual/screenshots/
+tests/fixtures/
 coverage/
 
 # OS files
