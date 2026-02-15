@@ -265,7 +265,8 @@ async function exportDocToHTML(docId, outputDir) {
   htmlLines.push('<body>');
   htmlLines.push('<div class="doc-content">');
 
-  // Process positioned objects (images with absolute/relative positioning)
+  // Pre-process positioned objects (fetch and prepare HTML, but don't insert yet)
+  const positionedObjectsHTML = [];
   if (doc.positionedObjects) {
     for (const [objId, posObj] of Object.entries(doc.positionedObjects)) {
       try {
@@ -316,7 +317,7 @@ async function exportDocToHTML(docId, outputDir) {
         }
 
         const alt = embedded.title || embedded.description || '';
-        htmlLines.push(`<div class="positioned-image"><img src="${escapeHtml(imgSrc)}" alt="${escapeHtml(alt)}" style="${style}" /></div>`);
+        positionedObjectsHTML.push(`<div class="positioned-image"><img src="${escapeHtml(imgSrc)}" alt="${escapeHtml(alt)}" style="${style}" /></div>`);
       } catch (error) {
         console.error(`Error rendering positioned object ${objId}:`, error.message);
       }
@@ -347,6 +348,8 @@ async function exportDocToHTML(docId, outputDir) {
   let listStack = [];  // Array of {type: 'ul'/'ol', level: 0/1/2...}
   let prevNestingLevel = -1;
   let prevListId = null;  // Track previous listId to detect list changes
+  let positionedObjectsInserted = false;  // Track if we've inserted positioned objects
+  let seenTitleOrSubtitle = false;  // Track if we've seen title/subtitle paragraphs
 
   for (const element of bodyContent) {
     if (element.sectionBreak) {
@@ -424,6 +427,16 @@ async function exportDocToHTML(docId, outputDir) {
           }
           prevListId = null;
           htmlLines.push(html);
+
+          // Track if we've seen title/subtitle, and insert positioned objects after them
+          const namedType = element.paragraph.paragraphStyle?.namedStyleType;
+          if (namedType === 'TITLE' || namedType === 'SUBTITLE') {
+            seenTitleOrSubtitle = true;
+          } else if (seenTitleOrSubtitle && !positionedObjectsInserted && positionedObjectsHTML.length > 0) {
+            // First non-title/subtitle paragraph after title/subtitle - insert positioned objects here
+            htmlLines.push(...positionedObjectsHTML);
+            positionedObjectsInserted = true;
+          }
         }
       } catch (error) {
         console.error('Error rendering paragraph:', error.message);
@@ -457,6 +470,11 @@ async function exportDocToHTML(docId, outputDir) {
     htmlLines.push('</li>');
   }
   closeAllLists(listStack, htmlLines);
+
+  // If positioned objects weren't inserted yet (no title/subtitle in doc), insert at end
+  if (!positionedObjectsInserted && positionedObjectsHTML.length > 0) {
+    htmlLines.push(...positionedObjectsHTML);
+  }
 
   htmlLines.push('</div>');
   htmlLines.push('</body>');
