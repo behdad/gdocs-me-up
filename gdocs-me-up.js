@@ -268,6 +268,7 @@ body {
 }
 p, li {
   margin: 0.5em 0;
+  line-height: 1.5;
 }
 img {
   display: inline-block;
@@ -510,9 +511,9 @@ async function renderParagraph(
     inlineStyle += `text-align:${alignmentMapLTR[align]};`;
   }
   if(mergedParaStyle.lineSpacing){
-    // Google Docs lineSpacing is a percentage (e.g., 115 = 1.15 line spacing)
-    // Empirically 1.25 multiplier approximates Google Docs rendering
-    const ls=mergedParaStyle.lineSpacing*1.25/100;
+    // Google Docs lineSpacing as direct percentage
+    // Base line-height is 1.5 (set in CSS), this overrides when specified
+    const ls=mergedParaStyle.lineSpacing*1.5/100;
     inlineStyle += `line-height:${ls};`;
   }
   if(mergedParaStyle.spaceAbove?.magnitude){
