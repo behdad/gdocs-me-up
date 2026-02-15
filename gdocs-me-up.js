@@ -1525,10 +1525,42 @@ function renderAutoText(autoText){
 if(require.main===module){
   const docId=process.argv[2];
   const outDir=process.argv[3];
+
+  // Show help if requested
+  if (docId === '--help' || docId === '-h') {
+    console.log(`
+Google Docs High-Fidelity HTML Exporter
+
+Usage:
+  node gdocs-me-up.js <DOC_ID> <OUTPUT_DIR>
+
+Arguments:
+  DOC_ID      Google Docs document ID (from the URL)
+  OUTPUT_DIR  Directory where HTML and images will be exported
+
+Example:
+  node gdocs-me-up.js 1AbCdEfgHIjKLMnOP ./output
+
+The exported HTML will be saved as OUTPUT_DIR/index.html
+Images will be saved in OUTPUT_DIR/images/
+
+Requirements:
+  - service_account.json file with Google Docs API access
+  - Document must be accessible by the service account
+    `);
+    process.exit(0);
+  }
+
   if(!docId||!outDir){
-    console.error('Usage: node google-docs-high-fidelity-export.js <DOC_ID> <OUTPUT_DIR>');
+    console.error('Error: Missing required arguments\n');
+    console.error('Usage: node gdocs-me-up.js <DOC_ID> <OUTPUT_DIR>');
+    console.error('Run with --help for more information');
     process.exit(1);
   }
-  exportDocToHTML(docId, outDir).catch(err=>console.error('Export error:',err));
+
+  exportDocToHTML(docId, outDir).catch(err=>{
+    console.error('Export error:',err.message || err);
+    process.exit(1);
+  });
 }
 
