@@ -664,7 +664,11 @@ function renderTextRun(textRun, usedFonts, baseStyle){
   deepMerge(finalStyle, textRun.textStyle||{});
 
   let content=textRun.content||'';
+  // Remove trailing newline (marks end of paragraph)
   content=content.replace(/\n$/,'');
+  // Convert vertical tabs (\u000b) to a placeholder
+  // These represent soft line breaks within a paragraph (Shift+Enter in Google Docs)
+  content=content.replace(/\u000b/g,'__LINEBREAK__');
 
   const cssClasses=[];
   let inlineStyle='';
@@ -742,7 +746,9 @@ function renderTextRun(textRun, usedFonts, baseStyle){
     }
   }
 
-  return openTag+escapeHtml(content)+closeTag;
+  // Replace line break placeholder with actual <br> tags after escaping
+  const escapedContent = escapeHtml(content).replace(/__LINEBREAK__/g, '<br>');
+  return openTag+escapedContent+closeTag;
 }
 
 // -----------------------------------------------------
