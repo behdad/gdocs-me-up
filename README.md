@@ -12,15 +12,15 @@ A Node.js script that exports Google Docs to HTML+CSS with high fidelity, preser
 
 ### What It Does
 
-1. **Named Styles**: Detects **Title**, **Subtitle**, **HEADING_1..6**, and applies them to HTML headings (H1..H6) or custom classes.  
-2. **Line Spacing & Margins**: Honors `paragraphStyle.lineSpacing`, `spaceAbove`, `spaceBelow`, indentation, alignment.  
-3. **Right-to-Left**: If the doc says a paragraph is RTL, we add `dir="rtl"` and flip alignment (START → right).  
-4. **Tables**: GDocs tables become `<table>` with `<tr>` and `<td>`, keeping paragraph formatting in each cell.  
-5. **Images**: Exports each embedded image at the doc’s reported width/height (in pt → px), respecting scaling. Saves images in an `images/` folder.  
-6. **TOC**: If your doc has a table of contents, we export it in a `<div class="doc-toc">`, indenting each line by its heading level.  
-7. **Bullet/Numbered Lists**: Detects GDocs bullet styles, outputting `<ul>` / `<ol>`. If the doc is RTL, we do `<ul dir="rtl">` so bullets align on the right.  
-8. **Google Fonts**: Gathers unique fonts used in the doc. Inserts a `<link>` to [fonts.googleapis.com](https://fonts.googleapis.com/) so text families match.  
-9. **Neutralized Headings**: Browsers normally inflate `<h3>`. We override heading tags (`h1..h6 { font-size: 1em }`) so Google Docs’ inline style alone sets the final size.  
+1. **Named Styles**: Detects **Title**, **Subtitle**, **HEADING_1..6**, and applies them to HTML headings (H1..H6) or custom classes.
+2. **Line Spacing & Margins**: Honors `paragraphStyle.lineSpacing`, `spaceAbove`, `spaceBelow`, indentation, alignment.
+3. **Right-to-Left**: If the doc says a paragraph is RTL, we add `dir="rtl"` and flip alignment (START → right).
+4. **Tables**: GDocs tables become `<table>` with `<tr>` and `<td>`, keeping paragraph formatting in each cell.
+5. **Images**: Exports inline and positioned images (header photos, wrapped images) constrained to container width while maintaining aspect ratios. Saves images in an `images/` folder.
+6. **TOC**: If your doc has a table of contents, we export it in a `<div class="doc-toc">`, indenting each line by its heading level.
+7. **Bullet/Numbered Lists**: Detects all GDocs list styles (disc, circle, square, dash bullets; decimal, roman, alphabetic numbering) with proper nesting. RTL lists use `<ul dir="rtl">` so bullets align on the right.
+8. **Google Fonts**: Gathers unique fonts used in the doc. Inserts a `<link>` to [fonts.googleapis.com](https://fonts.googleapis.com/) so text families match.
+9. **Neutralized Headings**: Browsers normally inflate `<h3>`. We override heading tags (`h1..h6 { font-size: 1em }`) so Google Docs' inline style alone sets the final size.  
 
 ---
 
@@ -49,7 +49,12 @@ A Node.js script that exports Google Docs to HTML+CSS with high fidelity, preser
 node gdocs-me-up.js <DOC_ID> <OUTPUT_DIR>
 ```
 
-- **`<DOC_ID>`**: The unique ID from your doc’s URL. For example:
+For help:
+```bash
+node gdocs-me-up.js --help
+```
+
+- **`<DOC_ID>`**: The unique ID from your doc's URL. For example:
   ```
   https://docs.google.com/document/d/1AbCdE-FgHiJKlMnOpQRs7TuVMue/edit
                 ^^^^^^^^^^^^^^^^^^^^^
@@ -66,7 +71,50 @@ On completion:
 - **`docs_export/index.html`**: Your doc in near-pixel HTML+CSS fidelity.  
 - **`docs_export/images/`**: Downloaded images.  
 
-Open `docs_export/index.html` in your browser. You’ll see headings, bullet-lists, alignment, images, and more, closely mirroring the original doc.
+Open `docs_export/index.html` in your browser. You'll see headings, bullet-lists, alignment, images, and more, closely mirroring the original doc.
+
+---
+
+## Testing
+
+The project includes comprehensive testing to ensure export quality:
+
+### Unit Tests
+```bash
+npm test
+```
+Tests core utility functions (escapeHtml, color conversion, list detection, etc.) with 97% coverage.
+
+### Content Verification Tests
+```bash
+npm test tests/content-verification.test.js
+```
+Compares Google Docs API data with exported HTML to verify:
+- Text content accuracy
+- Link preservation
+- Image export
+- Heading hierarchy
+- List structures
+
+Uses two stable reference documents as golden standards.
+
+### Snapshot Tests
+Full HTML regression detection - catches **any** change to output:
+```bash
+npm test  # Runs automatically with other tests
+npm test -- -u  # Update snapshots after intentional changes
+```
+
+### Visual Comparison Tests
+```bash
+npm run test:visual
+```
+Generates side-by-side screenshots and analysis reports comparing Google Docs with exported HTML. Reports include:
+- Structure analysis (element counts)
+- Layout metrics (spacing, sizing)
+- Actionable recommendations
+
+See `tests/visual/README.md` for details.
 
 ---
 
@@ -76,7 +124,7 @@ Open `docs_export/index.html` in your browser. You’ll see headings, bullet-lis
 
 2. **Right-to-Left Paragraphs**: If `paragraphStyle.direction = RIGHT_TO_LEFT`, we add `dir="rtl"`. If alignment=START, it becomes `right`; alignment=END => `left`. Lists also carry `dir="rtl"` so bullets go on the right side.  
 
-3. **Images**: We read `imageProperties` to get `width.magnitude` + `height.magnitude` (in points), multiply by ~1.333 to convert to px, and store them in `<img style="max-width: Xpx; max-height: Ypx;">`. If the doc scaled an image, we read `transform.scaleX/scaleY`.  
+3. **Images**: Supports both inline images and positioned objects (header photos, wrapped images). Images are constrained to container width with `max-width: 100%; height: auto;` to maintain aspect ratios and prevent oversized images. We read size info from both `imageProperties.size` and `embedded.size`, converting points to pixels (~1.333 ratio) and respecting `transform.scaleX/scaleY`. Positioned objects render after title/subtitle paragraphs.  
 
 4. **TOC Indentation**: For each line in the doc’s table of contents, the script checks the heading level of the link target. It then adds a `<div class="toc-level-3">` (for example) with a margin-left rule in the CSS.  
 
