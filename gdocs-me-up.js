@@ -978,9 +978,22 @@ function detectListChange(paragraph, doc, listStack, isRTL, prevLevel, prevListI
     else if (symbol === '-') bulletStyle = 'dash';
   }
 
+  // Detect numbering style for ordered lists
+  let numberStyle = 'decimal'; // default
+  if (isNumbered && glyph?.glyphType) {
+    const type = glyph.glyphType;
+    if (type === 'DECIMAL') numberStyle = 'decimal';
+    else if (type === 'UPPER_ALPHA') numberStyle = 'upper-alpha';
+    else if (type === 'LOWER_ALPHA' || type === 'ALPHA') numberStyle = 'lower-alpha';
+    else if (type === 'UPPER_ROMAN' || type === 'ROMAN') numberStyle = 'upper-roman';
+    else if (type === 'LOWER_ROMAN') numberStyle = 'lower-roman';
+  }
+
   const startType=isNumbered?'OL':'UL';
   const rtlFlag=isRTL?'_RTL':'';
-  const styleFlag=(!isNumbered && bulletStyle !== 'disc') ? `_${bulletStyle.toUpperCase()}` : '';
+  const styleFlag=isNumbered
+    ? (numberStyle !== 'decimal' ? `_${numberStyle.toUpperCase().replace(/-/g, '_')}` : '')
+    : (bulletStyle !== 'disc' ? `_${bulletStyle.toUpperCase()}` : '');
 
   // Starting a list for the first time
   if(listStack.length === 0){
@@ -1037,27 +1050,35 @@ function handleListState(listChange, listStack, htmlLines){
       const typeInfo = parts[0].replace('start', '');
       const level = parts[1] || '0';
 
-      // Parse style flags (DASH, CIRCLE, SQUARE)
-      let bulletStyle = '';
+      // Parse style flags (DASH, CIRCLE, SQUARE for UL; UPPER_ALPHA, LOWER_ROMAN, etc. for OL)
+      let listStyle = '';
       if(typeInfo.includes('_DASH')){
-        bulletStyle = ' style="list-style-type: \'− \'"';
+        listStyle = ' style="list-style-type: \'− \'"';
       } else if(typeInfo.includes('_CIRCLE')){
-        bulletStyle = ' style="list-style-type: circle"';
+        listStyle = ' style="list-style-type: circle"';
       } else if(typeInfo.includes('_SQUARE')){
-        bulletStyle = ' style="list-style-type: square"';
+        listStyle = ' style="list-style-type: square"';
+      } else if(typeInfo.includes('_UPPER_ALPHA')){
+        listStyle = ' style="list-style-type: upper-alpha"';
+      } else if(typeInfo.includes('_LOWER_ALPHA')){
+        listStyle = ' style="list-style-type: lower-alpha"';
+      } else if(typeInfo.includes('_UPPER_ROMAN')){
+        listStyle = ' style="list-style-type: upper-roman"';
+      } else if(typeInfo.includes('_LOWER_ROMAN')){
+        listStyle = ' style="list-style-type: lower-roman"';
       }
 
       if(typeInfo.includes('UL_RTL') || (typeInfo.includes('UL') && typeInfo.includes('_RTL'))){
-        htmlLines.push(`<ul dir="rtl"${bulletStyle}>`);
+        htmlLines.push(`<ul dir="rtl"${listStyle}>`);
         listStack.push(`${typeInfo.toLowerCase()}:${level}`);
       } else if(typeInfo.includes('OL_RTL')){
-        htmlLines.push('<ol dir="rtl">');
+        htmlLines.push(`<ol dir="rtl"${listStyle}>`);
         listStack.push(`${typeInfo.toLowerCase()}:${level}`);
       } else if(typeInfo.includes('UL')){
-        htmlLines.push(`<ul${bulletStyle}>`);
+        htmlLines.push(`<ul${listStyle}>`);
         listStack.push(`${typeInfo.toLowerCase()}:${level}`);
       } else {
-        htmlLines.push('<ol>');
+        htmlLines.push(`<ol${listStyle}>`);
         listStack.push(`${typeInfo.toLowerCase()}:${level}`);
       }
     } else if(action === 'endLIST'){
