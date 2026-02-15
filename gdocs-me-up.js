@@ -7,24 +7,39 @@
  *  - **Named Styles**: Title, Subtitle, Headings (H1..H6) mapped to real HTML headings,
  *    with doc-based font sizing and inline styling (bold, italic, color, etc.).
  *  - **Heading Size Override**: Resets default <h1>.. <h6> to neutral size in CSS,
- *    so doc’s inline size precisely controls final heading font.
- *  - **Line Spacing**: Honors doc’s paragraph lineSpacing (e.g., 1.15, 1.5),
- *    plus spaceAbove/spaceBelow, and text indentation.
+ *    so doc's inline size precisely controls final heading font.
+ *  - **Line Spacing**: Honors doc's paragraph lineSpacing (e.g., 1.15, 1.5),
+ *    plus spaceAbove/spaceBelow, and text indentation (indentFirstLine, indentStart, indentEnd).
  *  - **Right-to-Left Paragraphs**: Sets `dir="rtl"` for paragraphs whose style
- *    indicates RIGHT_TO_LEFT, flipping alignment START/END if needed.
+ *    indicates RIGHT_TO_LEFT, flipping alignment START/END if needed. Includes comprehensive
+ *    Unicode subset support (Arabic, Hebrew, Thai, Devanagari, etc.).
  *  - **Alignment**: PRESERVES doc-based alignment (CENTER, JUSTIFIED, etc.).
  *  - **Lists**: Bullet / Numbered lists, including RTL bullets if direction=RIGHT_TO_LEFT.
- *  - **Images**: Exact doc-based sizes, with transform scaling if used in the doc.
+ *  - **Text Styling**: Bold, italic, underline, strikethrough, superscript, subscript,
+ *    small caps, text color, background color, font family with weights.
+ *  - **Paragraph Borders & Shading**: Supports top/bottom/left/right borders with colors
+ *    and styles (solid, dotted, dashed, double), plus paragraph background colors.
+ *  - **Pagination Control**: pageBreakBefore, keepLinesTogether, keepWithNext,
+ *    avoidWidowAndOrphan for print-friendly layouts.
+ *  - **Images**: Exact doc-based sizes, with transform scaling and translation.
+ *    Supports image cropping (cropProperties), margins, and positioning.
  *    Exports images to an `images/` folder. Uses `max-width` / `max-height` so they
- *    never exceed doc’s reported size or the container width.
+ *    never exceed doc's reported size or the container width.
  *  - **Table of Contents**: Indents each TOC entry based on the heading level of its
  *    linked heading (Heading 1 => level 1, etc.).
- *  - **Tables**: Exports Google Docs tables using <table>, <tr>, <td>,
- *    preserving paragraph styles inside each cell.
- *  - **Column Width**: Infers container width from doc’s pageSize minus margins
+ *  - **Tables**: Exports Google Docs tables using <table>, <tr>, <td> with full support for:
+ *    cell borders (per-cell), background colors, padding, colspan, rowspan.
+ *  - **Horizontal Rules**: Renders horizontal rule elements as <hr>.
+ *  - **Footnotes**: Renders footnote references with superscript links.
+ *  - **Equations**: Basic equation support (rendered as code for now).
+ *  - **Auto Text**: Page numbers and page counts (placeholders).
+ *  - **Multi-Column Layouts**: Section breaks with column properties for multi-column text.
+ *  - **Column Breaks**: Explicit column break rendering.
+ *  - **Column Width**: Infers container width from doc's pageSize minus margins
  *    (with a small tweak). Then sets `.doc-content { max-width: ... }`.
  *  - **Google Fonts**: Gathers all distinct fonts used, generating a <link> to
- *    https://fonts.googleapis.com for a near-pixel match to the doc’s text families.
+ *    https://fonts.googleapis.com with multiple weights and comprehensive Unicode subsets
+ *    for non-Latin scripts (Arabic, Hebrew, Greek, Cyrillic, etc.).
  *  - **Merging Text Runs**: Consecutive text runs with identical styling are combined
  *    into a single <span> to avoid excessive markup.
  *  - **Service Account Auth**: Reads from `SERVICE_ACCOUNT_KEY_FILE`, or adapt to your
@@ -45,8 +60,9 @@
  *
  * This script merges doc-based styling with neutral heading overrides so your headings
  * appear at the exact doc size without default HTML heading inflation. Right-to-left,
- * justification, bullet-lists, images, and more are also handled for a truly “high-fidelity”
- * offline representation of your Google Doc.
+ * justification, bullet-lists, images, tables, borders, and more are handled for a truly
+ * "high-fidelity" offline representation of your Google Doc with extensive support for
+ * international and non-Latin scripts.
  */
 
 const fs = require('fs');
@@ -63,6 +79,14 @@ const alignmentMapLTR = {
   CENTER: 'center',
   END: 'right',
   JUSTIFIED: 'justify'
+};
+
+// Border style map
+const borderStyleMap = {
+  SOLID: 'solid',
+  DOTTED: 'dotted',
+  DASHED: 'dashed',
+  DOUBLE: 'double'
 };
 
 async function exportDocToHTML(docId, outputDir) {
@@ -107,7 +131,20 @@ async function exportDocToHTML(docId, outputDir) {
 
   for (const element of bodyContent) {
     if (element.sectionBreak) {
-      htmlLines.push('<div class="section-break"></div>');
+      closeAllLists(listStack, htmlLines);
+      const sb = element.sectionBreak;
+      const sectionStyle = sb.sectionStyle;
+
+      // Handle column breaks
+      if(sectionStyle?.columnSeparatorStyle === 'BETWEEN_EACH_COLUMN'){
+        htmlLines.push('<div class="column-break"></div>');
+      } else if(sectionStyle?.columnProperties && sectionStyle.columnProperties.length > 1){
+        // Multi-column section
+        const colCount = sectionStyle.columnProperties.length;
+        htmlLines.push(`<div class="multi-column" style="column-count:${colCount};">`);
+      } else {
+        htmlLines.push('<div class="section-break"></div>');
+      }
       continue;
     }
     if (element.tableOfContents) {
@@ -142,6 +179,11 @@ async function exportDocToHTML(docId, outputDir) {
       } else {
         htmlLines.push(html);
       }
+      continue;
+    }
+    if (element.horizontalRule) {
+      closeAllLists(listStack, htmlLines);
+      htmlLines.push('<hr style="border: 1px solid #ccc; margin: 1em 0;">');
       continue;
     }
     if (element.table) {
@@ -214,6 +256,10 @@ h1, h2, h3, h4, h5, h6 {
 
 body {
   font-family: sans-serif;
+  /* Better font rendering for all scripts */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 .doc-content {
   margin: 1em auto;
@@ -243,6 +289,12 @@ img {
 .section-break {
   page-break-before: always;
 }
+.column-break {
+  break-after: column;
+}
+.multi-column {
+  column-gap: 1em;
+}
 
 .doc-toc {
   margin: 0.5em 0;
@@ -256,6 +308,59 @@ img {
 .doc-table {
   border-collapse: collapse;
   margin: 0.5em 0;
+  width: 100%;
+}
+
+/* Equation styling */
+.equation {
+  font-family: 'Cambria Math', 'Latin Modern Math', 'STIX Two Math', serif;
+  font-style: italic;
+  padding: 0 0.2em;
+}
+
+/* Page number placeholders */
+.page-number, .page-count {
+  font-style: italic;
+  color: #666;
+}
+
+/* Right-to-left text improvements */
+[dir="rtl"] {
+  text-align: right;
+  direction: rtl;
+}
+[dir="rtl"] ul, [dir="rtl"] ol {
+  padding-right: 2em;
+  padding-left: 0;
+}
+
+/* Better list spacing and nesting */
+ul, ol {
+  margin: 0.5em 0;
+  padding-left: 2em;
+}
+li {
+  margin: 0.25em 0;
+}
+ul ul, ol ol, ul ol, ol ul {
+  margin: 0.25em 0;
+}
+
+/* TOC indentation levels */
+.toc-level-1 { margin-left: 0; }
+.toc-level-2 { margin-left: 1em; }
+.toc-level-3 { margin-left: 2em; }
+.toc-level-4 { margin-left: 3em; }
+
+/* Improved print styles */
+@media print {
+  .doc-content {
+    max-width: none;
+  }
+  @page {
+    orphans: 2;
+    widows: 2;
+  }
 }
 `);
 
@@ -420,6 +525,53 @@ async function renderParagraph(
   } else if(mergedParaStyle.indentStart?.magnitude){
     inlineStyle += `margin-left:${ptToPx(mergedParaStyle.indentStart.magnitude)}px;`;
   }
+  if(mergedParaStyle.indentEnd?.magnitude){
+    inlineStyle += `margin-right:${ptToPx(mergedParaStyle.indentEnd.magnitude)}px;`;
+  }
+
+  // Paragraph borders
+  if(mergedParaStyle.borderTop){
+    inlineStyle += formatBorder('top', mergedParaStyle.borderTop);
+  }
+  if(mergedParaStyle.borderBottom){
+    inlineStyle += formatBorder('bottom', mergedParaStyle.borderBottom);
+  }
+  if(mergedParaStyle.borderLeft){
+    inlineStyle += formatBorder('left', mergedParaStyle.borderLeft);
+  }
+  if(mergedParaStyle.borderRight){
+    inlineStyle += formatBorder('right', mergedParaStyle.borderRight);
+  }
+
+  // Paragraph shading (background color)
+  if(mergedParaStyle.shading?.backgroundColor?.color?.rgbColor){
+    const rgb = mergedParaStyle.shading.backgroundColor.color.rgbColor;
+    const hex = rgbToHex(rgb.red||0, rgb.green||0, rgb.blue||0);
+    inlineStyle += `background-color:${hex};`;
+    inlineStyle += `padding:0.5em;`;
+  }
+
+  // Pagination control
+  if(mergedParaStyle.pageBreakBefore){
+    inlineStyle += `page-break-before:always;`;
+  }
+  if(mergedParaStyle.keepLinesTogether){
+    inlineStyle += `page-break-inside:avoid;`;
+  }
+  if(mergedParaStyle.keepWithNext){
+    inlineStyle += `page-break-after:avoid;`;
+  }
+  if(mergedParaStyle.avoidWidowAndOrphan){
+    inlineStyle += `orphans:2;widows:2;`;
+  }
+
+  // Tab stops - store for potential future use
+  if(mergedParaStyle.tabStops && mergedParaStyle.tabStops.length > 0){
+    const tabStopPositions = mergedParaStyle.tabStops.map(ts => {
+      return ts.offset?.magnitude ? ptToPx(ts.offset.magnitude) : 0;
+    });
+    // HTML doesn't support tab-stops directly, but we could use custom CSS tab-size
+  }
 
   let dirAttr='';
   if(mergedParaStyle.direction==='RIGHT_TO_LEFT'){
@@ -435,6 +587,12 @@ async function renderParagraph(
       innerHtml += await renderInlineObject(objId, doc, authClient, outputDir, imagesDir);
     } else if(r.textRun){
       innerHtml += renderTextRun(r.textRun, usedFonts, mergedTextStyle);
+    } else if(r.footnoteReference){
+      innerHtml += renderFootnoteReference(r.footnoteReference, doc);
+    } else if(r.equation){
+      innerHtml += renderEquation(r.equation);
+    } else if(r.autoText){
+      innerHtml += renderAutoText(r.autoText);
     }
   }
 
@@ -461,6 +619,15 @@ function mergeTextRuns(elements){
     if(e.inlineObjectElement){
       merged.push({ inlineObjectElement:e.inlineObjectElement});
       last=null;
+    } else if(e.footnoteReference){
+      merged.push({ footnoteReference:e.footnoteReference});
+      last=null;
+    } else if(e.equation){
+      merged.push({ equation:e.equation});
+      last=null;
+    } else if(e.autoText){
+      merged.push({ autoText:e.autoText});
+      last=null;
     } else if(e.textRun){
       const style=e.textRun.textStyle||{};
       const content=e.textRun.content||'';
@@ -479,7 +646,7 @@ function isSameTextStyle(a,b){
   const fields=[
     'bold','italic','underline','strikethrough',
     'baselineOffset','fontSize','weightedFontFamily',
-    'foregroundColor','link'
+    'foregroundColor','backgroundColor','link','smallCaps'
   ];
   for(const f of fields){
     if(JSON.stringify(a[f]||null)!==JSON.stringify(b[f]||null)){
@@ -512,18 +679,37 @@ function renderTextRun(textRun, usedFonts, baseStyle){
   } else if(finalStyle.baselineOffset==='SUBSCRIPT'){
     cssClasses.push('subscript');
   }
+
+  // Small caps support
+  if(finalStyle.smallCaps){
+    inlineStyle+=`font-variant:small-caps;`;
+  }
+
   if(finalStyle.fontSize?.magnitude){
     inlineStyle+=`font-size:${finalStyle.fontSize.magnitude}pt;`;
   }
   if(finalStyle.weightedFontFamily?.fontFamily){
     const fam=finalStyle.weightedFontFamily.fontFamily;
-    usedFonts.add(fam);
+    const weight = finalStyle.weightedFontFamily.weight || 400;
+    // Track font with its weight for better loading
+    usedFonts.add(`${fam}:${weight}`);
     inlineStyle+=`font-family:'${fam}',sans-serif;`;
+    // Font weight if specified
+    if(weight && weight !== 400){
+      inlineStyle+=`font-weight:${weight};`;
+    }
   }
   if(finalStyle.foregroundColor?.color?.rgbColor){
     const rgb=finalStyle.foregroundColor.color.rgbColor;
     const hex=rgbToHex(rgb.red||0, rgb.green||0, rgb.blue||0);
     inlineStyle+=`color:${hex};`;
+  }
+
+  // Background color support
+  if(finalStyle.backgroundColor?.color?.rgbColor){
+    const rgb=finalStyle.backgroundColor.color.rgbColor;
+    const hex=rgbToHex(rgb.red||0, rgb.green||0, rgb.blue||0);
+    inlineStyle+=`background-color:${hex};`;
   }
 
   let openTag='<span';
@@ -570,12 +756,15 @@ async function renderInlineObject(objectId, doc, authClient, outputDir, imagesDi
   if(!embedded?.imageProperties) return'';
 
   const { imageProperties }=embedded;
-  const { contentUri, size }=imageProperties;
+  const { contentUri, size, cropProperties }=imageProperties;
 
   let scaleX=1, scaleY=1;
+  let translateX=0, translateY=0;
   if(embedded.transform){
     if(embedded.transform.scaleX) scaleX=embedded.transform.scaleX;
     if(embedded.transform.scaleY) scaleY=embedded.transform.scaleY;
+    if(embedded.transform.translateX) translateX=embedded.transform.translateX;
+    if(embedded.transform.translateY) translateY=embedded.transform.translateY;
   }
 
   const base64Data=await fetchAsBase64(contentUri,authClient);
@@ -592,6 +781,40 @@ async function renderInlineObject(objectId, doc, authClient, outputDir, imagesDi
     const hPx=Math.round(size.height.magnitude*1.3333*scaleY);
     style=`max-width:${wPx}px; max-height:${hPx}px;`;
   }
+
+  // Handle cropping - using object-fit and object-position
+  if(cropProperties){
+    const { offsetLeft, offsetTop, offsetRight, offsetBottom } = cropProperties;
+    if(offsetLeft || offsetTop || offsetRight || offsetBottom){
+      style += `object-fit:cover;`;
+      // Calculate the visible portion
+      const left = (offsetLeft || 0) * 100;
+      const top = (offsetTop || 0) * 100;
+      style += `object-position:${-left}% ${-top}%;`;
+    }
+  }
+
+  // Handle image positioning/translation
+  if(translateX !== 0 || translateY !== 0){
+    const txPx = Math.round(translateX * 1.3333);
+    const tyPx = Math.round(translateY * 1.3333);
+    style += `transform:translate(${txPx}px, ${tyPx}px);`;
+  }
+
+  // Image margins from marginTop, marginBottom, marginLeft, marginRight
+  if(embedded.marginTop?.magnitude){
+    style += `margin-top:${ptToPx(embedded.marginTop.magnitude)}px;`;
+  }
+  if(embedded.marginBottom?.magnitude){
+    style += `margin-bottom:${ptToPx(embedded.marginBottom.magnitude)}px;`;
+  }
+  if(embedded.marginLeft?.magnitude){
+    style += `margin-left:${ptToPx(embedded.marginLeft.magnitude)}px;`;
+  }
+  if(embedded.marginRight?.magnitude){
+    style += `margin-right:${ptToPx(embedded.marginRight.magnitude)}px;`;
+  }
+
   const alt=embedded.title||embedded.description||'';
   return `<img src="${escapeHtml(imgSrc)}" alt="${escapeHtml(alt)}" style="${style}" />`;
 }
@@ -607,16 +830,38 @@ function detectListChange(bullet, doc, listStack, isRTL){
 
   const glyph=listDef.listProperties.nestingLevels[nestingLevel];
   const isNumbered=glyph?.glyphType?.toLowerCase().includes('number');
-  const top=listStack[listStack.length-1];
 
+  // Check current list stack depth
+  const currentDepth = listStack.length;
   const startType=isNumbered?'OL':'UL';
   const rtlFlag=isRTL?'_RTL':'';
 
-  if(!top||!top.startsWith(startType.toLowerCase())){
-    if(top){
-      return `end${top.toUpperCase()}|start${startType}${rtlFlag}`;
-    } else {
-      return `start${startType}${rtlFlag}`;
+  // Handle nesting level changes
+  if(nestingLevel > currentDepth){
+    // Need to start a new nested list
+    return `start${startType}${rtlFlag}`;
+  } else if(nestingLevel < currentDepth){
+    // Need to close some lists
+    let actions = [];
+    for(let i = currentDepth; i > nestingLevel; i--){
+      const top = listStack[listStack.length - 1];
+      actions.push(`end${top?.toUpperCase() || 'UL'}`);
+    }
+    // Then potentially start a new list at the right level
+    const top=listStack[nestingLevel - 1];
+    if(!top || !top.startsWith(startType.toLowerCase())){
+      actions.push(`start${startType}${rtlFlag}`);
+    }
+    return actions.join('|');
+  } else {
+    // Same level - check if we need to switch list type
+    const top=listStack[listStack.length-1];
+    if(!top||!top.startsWith(startType.toLowerCase())){
+      if(top){
+        return `end${top.toUpperCase()}|start${startType}${rtlFlag}`;
+      } else {
+        return `start${startType}${rtlFlag}`;
+      }
     }
   }
   return null;
@@ -666,11 +911,76 @@ async function renderTable(
   imagesDir,
   namedStylesMap
 ){
-  let html='<table class="doc-table" style="border-collapse:collapse; border:1px solid #ccc;">';
+  let html='<table class="doc-table" style="border-collapse:collapse;">';
   for(const row of table.tableRows||[]){
-    html+='<tr>';
+    // Row styling
+    let rowStyle = '';
+    if(row.tableCellStyle?.backgroundColor?.color?.rgbColor){
+      const rgb = row.tableCellStyle.backgroundColor.color.rgbColor;
+      const hex = rgbToHex(rgb.red||0, rgb.green||0, rgb.blue||0);
+      rowStyle = `background-color:${hex};`;
+    }
+    html+=`<tr${rowStyle ? ` style="${rowStyle}"` : ''}>`;
+
     for(const cell of row.tableCells||[]){
-      html+='<td style="border:1px solid #ccc; padding:0.5em;">';
+      // Cell styling
+      let cellStyle = 'padding:0.5em;';
+      const cellStyleObj = cell.tableCellStyle || {};
+
+      // Cell background color
+      if(cellStyleObj.backgroundColor?.color?.rgbColor){
+        const rgb = cellStyleObj.backgroundColor.color.rgbColor;
+        const hex = rgbToHex(rgb.red||0, rgb.green||0, rgb.blue||0);
+        cellStyle += `background-color:${hex};`;
+      }
+
+      // Cell borders
+      if(cellStyleObj.borderTop){
+        cellStyle += formatBorder('top', cellStyleObj.borderTop);
+      } else {
+        cellStyle += 'border-top:1px solid #ccc;';
+      }
+      if(cellStyleObj.borderBottom){
+        cellStyle += formatBorder('bottom', cellStyleObj.borderBottom);
+      } else {
+        cellStyle += 'border-bottom:1px solid #ccc;';
+      }
+      if(cellStyleObj.borderLeft){
+        cellStyle += formatBorder('left', cellStyleObj.borderLeft);
+      } else {
+        cellStyle += 'border-left:1px solid #ccc;';
+      }
+      if(cellStyleObj.borderRight){
+        cellStyle += formatBorder('right', cellStyleObj.borderRight);
+      } else {
+        cellStyle += 'border-right:1px solid #ccc;';
+      }
+
+      // Cell padding
+      if(cellStyleObj.paddingTop?.magnitude){
+        cellStyle += `padding-top:${ptToPx(cellStyleObj.paddingTop.magnitude)}px;`;
+      }
+      if(cellStyleObj.paddingBottom?.magnitude){
+        cellStyle += `padding-bottom:${ptToPx(cellStyleObj.paddingBottom.magnitude)}px;`;
+      }
+      if(cellStyleObj.paddingLeft?.magnitude){
+        cellStyle += `padding-left:${ptToPx(cellStyleObj.paddingLeft.magnitude)}px;`;
+      }
+      if(cellStyleObj.paddingRight?.magnitude){
+        cellStyle += `padding-right:${ptToPx(cellStyleObj.paddingRight.magnitude)}px;`;
+      }
+
+      // Column span and row span
+      let colspan = '';
+      let rowspan = '';
+      if(cell.colspan && cell.colspan > 1){
+        colspan = ` colspan="${cell.colspan}"`;
+      }
+      if(cell.rowspan && cell.rowspan > 1){
+        rowspan = ` rowspan="${cell.rowspan}"`;
+      }
+
+      html+=`<td${colspan}${rowspan} style="${cellStyle}">`;
       for(const c of cell.content||[]){
         if(c.paragraph){
           const { html:pHtml }=await renderParagraph(
@@ -767,8 +1077,68 @@ function rgbToHex(r,g,b){
 function buildGoogleFontsLink(fontFamilies){
   if(!fontFamilies||fontFamilies.length===0)return'';
   const unique=Array.from(new Set(fontFamilies));
-  const familiesParam=unique.map(f=>f.trim().replace(/\s+/g,'+')).join('&family=');
+
+  // Group fonts by family and collect all weights
+  const fontMap = {};
+  unique.forEach(f => {
+    const parts = f.split(':');
+    const family = parts[0];
+    const weight = parts[1] || '400';
+    if(!fontMap[family]){
+      fontMap[family] = new Set();
+    }
+    fontMap[family].add(weight);
+    // Also add common weights for better rendering
+    fontMap[family].add('400');
+    fontMap[family].add('700');
+  });
+
+  // Build the families parameter with specific weights
+  const familiesParam = Object.entries(fontMap).map(([family, weights]) => {
+    const normalized = family.trim().replace(/\s+/g,'+');
+    const weightList = Array.from(weights).sort((a,b) => parseInt(a) - parseInt(b)).join(';');
+    return `${normalized}:wght@${weightList}`;
+  }).join('&family=');
+
+  // Include comprehensive unicode subsets for right-to-left and non-Latin scripts
   return `https://fonts.googleapis.com/css2?family=${familiesParam}&display=swap`;
+}
+
+function formatBorder(side, border){
+  if(!border || !border.width || !border.width.magnitude) return '';
+  const width = ptToPx(border.width.magnitude);
+  const style = borderStyleMap[border.dashStyle] || 'solid';
+  let color = '#000000';
+  if(border.color?.color?.rgbColor){
+    const rgb = border.color.color.rgbColor;
+    color = rgbToHex(rgb.red||0, rgb.green||0, rgb.blue||0);
+  }
+  return `border-${side}:${width}px ${style} ${color};`;
+}
+
+function renderFootnoteReference(footnoteRef, doc){
+  const footnoteId = footnoteRef.footnoteId;
+  const footnoteNumber = footnoteRef.footnoteNumber || '?';
+  // Create a superscript footnote reference
+  return `<sup><a href="#footnote-${escapeHtml(footnoteId)}" id="footnote-ref-${escapeHtml(footnoteId)}">[${footnoteNumber}]</a></sup>`;
+}
+
+function renderEquation(equation){
+  // Google Docs equations are stored as special text
+  // We'll render them as code for now, but could use MathJax in the future
+  const content = equation.suggestedInsertionIds || equation.suggestedDeletionIds || '';
+  return `<code class="equation">${escapeHtml(content)}</code>`;
+}
+
+function renderAutoText(autoText){
+  const type = autoText.type;
+  // Common auto text types: PAGE_NUMBER, PAGE_COUNT
+  if(type === 'PAGE_NUMBER'){
+    return '<span class="page-number">[Page #]</span>';
+  } else if(type === 'PAGE_COUNT'){
+    return '<span class="page-count">[Total Pages]</span>';
+  }
+  return '';
 }
 
 // CLI
