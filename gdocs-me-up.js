@@ -873,7 +873,8 @@ function detectListChange(bullet, doc, listStack, isRTL, prevLevel){
   if(!listDef?.listProperties?.nestingLevels)return null;
 
   const glyph=listDef.listProperties.nestingLevels[nestingLevel];
-  const isNumbered=glyph?.glyphType?.toLowerCase().includes('number');
+  // Detect if numbered list: check for startNumber property or glyphType containing 'number'
+  const isNumbered = (glyph?.startNumber !== undefined) || glyph?.glyphType?.toLowerCase().includes('number');
   const startType=isNumbered?'OL':'UL';
   const rtlFlag=isRTL?'_RTL':'';
 
