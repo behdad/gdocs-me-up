@@ -968,18 +968,29 @@ function detectListChange(paragraph, doc, listStack, isRTL, prevLevel, prevListI
     isNumbered = false;
   }
 
+  // Detect bullet style for unordered lists
+  let bulletStyle = 'disc'; // default
+  if (!isNumbered && glyph?.glyphSymbol) {
+    const symbol = glyph.glyphSymbol;
+    if (symbol === '●') bulletStyle = 'disc';
+    else if (symbol === '○') bulletStyle = 'circle';
+    else if (symbol === '■') bulletStyle = 'square';
+    else if (symbol === '-') bulletStyle = 'dash';
+  }
+
   const startType=isNumbered?'OL':'UL';
   const rtlFlag=isRTL?'_RTL':'';
+  const styleFlag=(!isNumbered && bulletStyle !== 'disc') ? `_${bulletStyle.toUpperCase()}` : '';
 
   // Starting a list for the first time
   if(listStack.length === 0){
-    return `start${startType}${rtlFlag}:${nestingLevel}`;
+    return `start${startType}${rtlFlag}${styleFlag}:${nestingLevel}`;
   }
 
   // Check if nesting level changed
   if(nestingLevel > prevLevel){
     // Going deeper - start nested list
-    return `start${startType}${rtlFlag}:${nestingLevel}`;
+    return `start${startType}${rtlFlag}${styleFlag}:${nestingLevel}`;
   } else if(nestingLevel < prevLevel){
     // Coming back up - close nested lists
     let actions = [];
@@ -992,12 +1003,12 @@ function detectListChange(paragraph, doc, listStack, isRTL, prevLevel, prevListI
     const stackIndexAfterClosing = listStack.length - (prevLevel - nestingLevel);
     if(stackIndexAfterClosing > 0){
       const parentType = listStack[stackIndexAfterClosing - 1]?.split(':')[0];
-      const wantType = startType.toLowerCase() + (isRTL ? '_rtl' : '');
+      const wantType = startType.toLowerCase() + (isRTL ? '_rtl' : '') + styleFlag.toLowerCase();
 
       // Check if parent list type changed (not listId - Google Docs splits numbered lists)
       if(parentType !== wantType){
         actions.push(`end${parentType?.toUpperCase() || 'UL'}`);
-        actions.push(`start${startType}${rtlFlag}:${nestingLevel}`);
+        actions.push(`start${startType}${rtlFlag}${styleFlag}:${nestingLevel}`);
       }
     }
 
@@ -1006,12 +1017,12 @@ function detectListChange(paragraph, doc, listStack, isRTL, prevLevel, prevListI
 
   // Same level - check if list type changed
   const currentType = listStack[listStack.length - 1]?.split(':')[0];
-  const wantType = startType.toLowerCase() + (isRTL ? '_rtl' : '');
+  const wantType = startType.toLowerCase() + (isRTL ? '_rtl' : '') + styleFlag.toLowerCase();
 
   // Only switch lists if the TYPE changed (OL vs UL)
   // Don't switch just because listId changed - Google Docs splits numbered lists across listIds
   if(currentType !== wantType){
-    return `end${currentType?.toUpperCase() || 'UL'}|start${startType}${rtlFlag}:${nestingLevel}`;
+    return `end${currentType?.toUpperCase() || 'UL'}|start${startType}${rtlFlag}${styleFlag}:${nestingLevel}`;
   }
 
   return null;
@@ -1021,23 +1032,33 @@ function handleListState(listChange, listStack, htmlLines){
   const actions=listChange.split('|');
   for(const action of actions){
     if(action.startsWith('start')){
-      // Extract type and level (format: "startUL:0" or "startOL_RTL:1")
+      // Extract type and level (format: "startUL:0", "startOL_RTL:1", "startUL_DASH:0")
       const parts = action.split(':');
       const typeInfo = parts[0].replace('start', '');
       const level = parts[1] || '0';
 
-      if(typeInfo.includes('UL_RTL')){
-        htmlLines.push('<ul dir="rtl">');
-        listStack.push(`ul_rtl:${level}`);
+      // Parse style flags (DASH, CIRCLE, SQUARE)
+      let bulletStyle = '';
+      if(typeInfo.includes('_DASH')){
+        bulletStyle = ' style="list-style-type: \'− \'"';
+      } else if(typeInfo.includes('_CIRCLE')){
+        bulletStyle = ' style="list-style-type: circle"';
+      } else if(typeInfo.includes('_SQUARE')){
+        bulletStyle = ' style="list-style-type: square"';
+      }
+
+      if(typeInfo.includes('UL_RTL') || (typeInfo.includes('UL') && typeInfo.includes('_RTL'))){
+        htmlLines.push(`<ul dir="rtl"${bulletStyle}>`);
+        listStack.push(`${typeInfo.toLowerCase()}:${level}`);
       } else if(typeInfo.includes('OL_RTL')){
         htmlLines.push('<ol dir="rtl">');
-        listStack.push(`ol_rtl:${level}`);
+        listStack.push(`${typeInfo.toLowerCase()}:${level}`);
       } else if(typeInfo.includes('UL')){
-        htmlLines.push('<ul>');
-        listStack.push(`ul:${level}`);
+        htmlLines.push(`<ul${bulletStyle}>`);
+        listStack.push(`${typeInfo.toLowerCase()}:${level}`);
       } else {
         htmlLines.push('<ol>');
-        listStack.push(`ol:${level}`);
+        listStack.push(`${typeInfo.toLowerCase()}:${level}`);
       }
     } else if(action === 'endLIST'){
       const top=listStack.pop();
