@@ -126,7 +126,8 @@ async function exportDocToHTML(docId, outputDir) {
   htmlLines.push('<body>');
   htmlLines.push('<div class="doc-content">');
 
-  let listStack = [];
+  let listStack = [];  // Array of {type: 'ul'/'ol', level: 0/1/2...}
+  let prevNestingLevel = -1;
   const bodyContent = doc.body?.content || [];
 
   for (const element of bodyContent) {
@@ -161,6 +162,20 @@ async function exportDocToHTML(docId, outputDir) {
       continue;
     }
     if (element.paragraph) {
+      const nestingLevel = element.paragraph.bullet?.nestingLevel ?? -1;
+
+      // Pass previous nesting level to detectListChange
+      element.paragraph.___prevNestingLevel = prevNestingLevel;
+
+      // Close previous <li> if nesting level is changing
+      if (prevNestingLevel >= 0 && prevNestingLevel < nestingLevel) {
+        // Nesting deeper - don't close previous <li>, nested list will go inside it
+      } else if (prevNestingLevel >= 0 && listStack.length > 0) {
+        // Same level or going back up - close previous <li>
+        // When going back up, the nested list was already closed by handleListState
+        htmlLines.push('</li>');
+      }
+
       const { html, listChange } = await renderParagraph(
         element.paragraph,
         doc,
@@ -175,8 +190,14 @@ async function exportDocToHTML(docId, outputDir) {
         handleListState(listChange, listStack, htmlLines);
       }
       if (listStack.length > 0) {
-        htmlLines.push(`<li>${html}</li>`);
+        htmlLines.push(`<li>${html}`);
+        prevNestingLevel = nestingLevel;
       } else {
+        // Not in a list, close any open <li>
+        if (prevNestingLevel >= 0) {
+          htmlLines.push('</li>');
+          prevNestingLevel = -1;
+        }
         htmlLines.push(html);
       }
       continue;
@@ -202,6 +223,10 @@ async function exportDocToHTML(docId, outputDir) {
     }
   }
 
+  // Close final <li> if open
+  if (prevNestingLevel >= 0) {
+    htmlLines.push('</li>');
+  }
   closeAllLists(listStack, htmlLines);
 
   htmlLines.push('</div>');
@@ -477,13 +502,20 @@ async function renderParagraph(
 
   // bullet logic
   const isRTL=(mergedParaStyle.direction==='RIGHT_TO_LEFT');
+  const currentNestingLevel = paragraph.bullet?.nestingLevel ?? -1;
   let listChange=null;
   if (paragraph.bullet) {
-    listChange=detectListChange(paragraph.bullet,doc,listStack,isRTL);
+    // prevNestingLevel is passed from the main loop
+    const prevLevel = paragraph.___prevNestingLevel ?? -1;
+    listChange=detectListChange(paragraph.bullet,doc,listStack,isRTL,prevLevel);
   } else {
     if(listStack.length>0){
-      const top=listStack[listStack.length-1];
-      listChange=`end${top.toUpperCase()}`;
+      // Exiting all lists
+      let actions = [];
+      for(let i = 0; i < listStack.length; i++){
+        actions.push('endLIST');
+      }
+      listChange = actions.join('|');
     }
   }
 
@@ -834,7 +866,7 @@ async function renderInlineObject(objectId, doc, authClient, outputDir, imagesDi
 // -----------------------------------------------------
 // 8) Lists
 // -----------------------------------------------------
-function detectListChange(bullet, doc, listStack, isRTL){
+function detectListChange(bullet, doc, listStack, isRTL, prevLevel){
   const listId=bullet.listId;
   const nestingLevel=bullet.nestingLevel||0;
   const listDef=doc.lists?.[listId];
@@ -842,40 +874,34 @@ function detectListChange(bullet, doc, listStack, isRTL){
 
   const glyph=listDef.listProperties.nestingLevels[nestingLevel];
   const isNumbered=glyph?.glyphType?.toLowerCase().includes('number');
-
-  // Check current list stack depth
-  const currentDepth = listStack.length;
   const startType=isNumbered?'OL':'UL';
   const rtlFlag=isRTL?'_RTL':'';
 
-  // Handle nesting level changes
-  if(nestingLevel > currentDepth){
-    // Need to start a new nested list
-    return `start${startType}${rtlFlag}`;
-  } else if(nestingLevel < currentDepth){
-    // Need to close some lists
+  // Starting a list for the first time
+  if(listStack.length === 0){
+    return `start${startType}${rtlFlag}:${nestingLevel}`;
+  }
+
+  // Check if nesting level changed
+  if(nestingLevel > prevLevel){
+    // Going deeper - start nested list
+    return `start${startType}${rtlFlag}:${nestingLevel}`;
+  } else if(nestingLevel < prevLevel){
+    // Coming back up - close nested lists
     let actions = [];
-    for(let i = currentDepth; i > nestingLevel; i--){
-      const top = listStack[listStack.length - 1];
-      actions.push(`end${top?.toUpperCase() || 'UL'}`);
-    }
-    // Then potentially start a new list at the right level
-    const top=listStack[nestingLevel - 1];
-    if(!top || !top.startsWith(startType.toLowerCase())){
-      actions.push(`start${startType}${rtlFlag}`);
+    for(let i = prevLevel; i > nestingLevel; i--){
+      actions.push(`endLIST`);
     }
     return actions.join('|');
-  } else {
-    // Same level - check if we need to switch list type
-    const top=listStack[listStack.length-1];
-    if(!top||!top.startsWith(startType.toLowerCase())){
-      if(top){
-        return `end${top.toUpperCase()}|start${startType}${rtlFlag}`;
-      } else {
-        return `start${startType}${rtlFlag}`;
-      }
-    }
   }
+
+  // Same level - check if list type changed
+  const currentType = listStack[listStack.length - 1]?.split(':')[0];
+  const wantType = startType.toLowerCase() + (isRTL ? '_rtl' : '');
+  if(currentType !== wantType){
+    return `end${currentType?.toUpperCase() || 'UL'}|start${startType}${rtlFlag}:${nestingLevel}`;
+  }
+
   return null;
 }
 
@@ -883,22 +909,35 @@ function handleListState(listChange, listStack, htmlLines){
   const actions=listChange.split('|');
   for(const action of actions){
     if(action.startsWith('start')){
-      if(action.includes('UL_RTL')){
+      // Extract type and level (format: "startUL:0" or "startOL_RTL:1")
+      const parts = action.split(':');
+      const typeInfo = parts[0].replace('start', '');
+      const level = parts[1] || '0';
+
+      if(typeInfo.includes('UL_RTL')){
         htmlLines.push('<ul dir="rtl">');
-        listStack.push('ul_rtl');
-      } else if(action.includes('OL_RTL')){
+        listStack.push(`ul_rtl:${level}`);
+      } else if(typeInfo.includes('OL_RTL')){
         htmlLines.push('<ol dir="rtl">');
-        listStack.push('ol_rtl');
-      } else if(action.includes('UL')){
+        listStack.push(`ol_rtl:${level}`);
+      } else if(typeInfo.includes('UL')){
         htmlLines.push('<ul>');
-        listStack.push('ul');
+        listStack.push(`ul:${level}`);
       } else {
         htmlLines.push('<ol>');
-        listStack.push('ol');
+        listStack.push(`ol:${level}`);
       }
+    } else if(action === 'endLIST'){
+      const top=listStack.pop();
+      if(!top) continue;
+      const listType = top.split(':')[0];
+      if(listType.startsWith('u')) htmlLines.push('</ul>');
+      else htmlLines.push('</ol>');
     } else if(action.startsWith('end')){
       const top=listStack.pop();
-      if(top.startsWith('u')) htmlLines.push('</ul>');
+      if(!top) continue;
+      const listType = top.split(':')[0];
+      if(listType.startsWith('u')) htmlLines.push('</ul>');
       else htmlLines.push('</ol>');
     }
   }
