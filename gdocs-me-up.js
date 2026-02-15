@@ -127,15 +127,34 @@ async function exportDocToHTML(docId, outputDir) {
   htmlLines.push('<div class="doc-content">');
 
   // Pre-process: count items per list per level to determine if single-item (numbered) or multi-item (bullets)
+  // Need to infer nestingLevel during preprocessing too
   const listItemCounts = {};
   const bodyContent = doc.body?.content || [];
+  let prevLevel = -1;
   for (const element of bodyContent) {
     if (element.paragraph?.bullet) {
       const bullet = element.paragraph.bullet;
-      const level = bullet.nestingLevel ?? 0;
+      // Infer nestingLevel: use indentStart as a signal
+      let level = bullet.nestingLevel;
+      if (level === undefined) {
+        const indentStart = element.paragraph.paragraphStyle?.indentStart?.magnitude || 0;
+        // Heuristic based on observed indent values:
+        // 36pt or less → level 0, 72pt → level 1
+        if (indentStart <= 40) {
+          level = 0;
+        } else if (indentStart >= 60) {
+          level = 1;
+        } else {
+          // Fallback: continue at previous level if in a list
+          level = (prevLevel >= 0 ? prevLevel : 0);
+        }
+      }
       const listId = bullet.listId;
       const key = `${listId}:${level}`;
       listItemCounts[key] = (listItemCounts[key] || 0) + 1;
+      prevLevel = level;
+    } else {
+      prevLevel = -1;
     }
   }
 
@@ -178,7 +197,23 @@ async function exportDocToHTML(docId, outputDir) {
       continue;
     }
     if (element.paragraph) {
-      const nestingLevel = element.paragraph.bullet ? (element.paragraph.bullet.nestingLevel ?? 0) : -1;
+      // Infer nesting level using indentStart as a signal
+      let nestingLevel = -1;
+      if (element.paragraph.bullet) {
+        nestingLevel = element.paragraph.bullet.nestingLevel;
+        if (nestingLevel === undefined) {
+          const indentStart = element.paragraph.paragraphStyle?.indentStart?.magnitude || 0;
+          // Heuristic: 36pt or less → level 0, 72pt → level 1
+          if (indentStart <= 40) {
+            nestingLevel = 0;
+          } else if (indentStart >= 60) {
+            nestingLevel = 1;
+          } else {
+            // Fallback: continue at previous level if in a list
+            nestingLevel = (prevNestingLevel >= 0 ? prevNestingLevel : 0);
+          }
+        }
+      }
 
       // Pass previous nesting level and listId to detectListChange
       element.paragraph.___prevNestingLevel = prevNestingLevel;
@@ -527,7 +562,7 @@ async function renderParagraph(
     // prevNestingLevel and prevListId are passed from the main loop
     const prevLevel = paragraph.___prevNestingLevel ?? -1;
     const prevListId = paragraph.___prevListId;
-    listChange=detectListChange(paragraph.bullet,doc,listStack,isRTL,prevLevel,prevListId);
+    listChange=detectListChange(paragraph,doc,listStack,isRTL,prevLevel,prevListId);
   } else {
     if(listStack.length>0){
       // Exiting all lists
@@ -886,9 +921,23 @@ async function renderInlineObject(objectId, doc, authClient, outputDir, imagesDi
 // -----------------------------------------------------
 // 8) Lists
 // -----------------------------------------------------
-function detectListChange(bullet, doc, listStack, isRTL, prevLevel, prevListId){
+function detectListChange(paragraph, doc, listStack, isRTL, prevLevel, prevListId){
+  const bullet = paragraph.bullet;
   const listId=bullet.listId;
-  const nestingLevel=bullet.nestingLevel||0;
+  // Infer nestingLevel using indentStart as a signal
+  let nestingLevel = bullet.nestingLevel;
+  if (nestingLevel === undefined) {
+    const indentStart = paragraph.paragraphStyle?.indentStart?.magnitude || 0;
+    // Heuristic: 36pt or less → level 0, 72pt → level 1
+    if (indentStart <= 40) {
+      nestingLevel = 0;
+    } else if (indentStart >= 60) {
+      nestingLevel = 1;
+    } else {
+      // Fallback: continue at previous level if in a list
+      nestingLevel = (prevLevel >= 0 ? prevLevel : 0);
+    }
+  }
   const listDef=doc.lists?.[listId];
   if(!listDef?.listProperties?.nestingLevels)return null;
 
