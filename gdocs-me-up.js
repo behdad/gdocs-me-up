@@ -989,8 +989,11 @@ async function renderInlineObject(objectId, doc, authClient, outputDir, imagesDi
     const embedded = inlineObj.inlineObjectProperties?.embeddedObject;
     if (!embedded?.imageProperties) return '';
 
-    const { imageProperties, size } = embedded;
+    const { imageProperties } = embedded;
     const { contentUri, cropProperties } = imageProperties;
+
+    // Check both locations for size: prefer imageProperties.size, fallback to embedded.size
+    const size = imageProperties.size || embedded.size;
 
     if (!contentUri) {
       console.warn(`Image ${objectId} has no content URI, skipping`);
@@ -1019,12 +1022,8 @@ async function renderInlineObject(objectId, doc, authClient, outputDir, imagesDi
 
     const imgSrc = path.relative(outputDir, filePath);
 
-  let style='';
-  if(size?.width?.magnitude && size?.height?.magnitude){
-    const wPx=Math.round(size.width.magnitude*1.3333*scaleX);
-    const hPx=Math.round(size.height.magnitude*1.3333*scaleY);
-    style=`max-width:${wPx}px; max-height:${hPx}px;`;
-  }
+  // Always constrain images to container width and maintain aspect ratio
+  let style='max-width:100%; height:auto;';
 
   // Handle cropping - using object-fit and object-position
   if(cropProperties){
