@@ -1,1 +1,24 @@
+# Credentials
 service_account.json
+
+# Node modules
+node_modules/
+
+# Test outputs (generated locally, not committed)
+tests/visual/output/
+tests/visual/analysis/
+tests/visual/screenshots/
+coverage/
+
+# OS files
+.DS_Store
+
+# Temporary test exports
+test-*/
+final-test*/
+
+# Playwright cache
+.playwright/
+
+# Logs
+*.log
