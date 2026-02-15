@@ -982,31 +982,42 @@ function renderTextRun(textRun, usedFonts, baseStyle){
 // 7) Inline Objects (Images)
 // -----------------------------------------------------
 async function renderInlineObject(objectId, doc, authClient, outputDir, imagesDir){
-  const inlineObj=doc.inlineObjects?.[objectId];
-  if(!inlineObj) return'';
+  try {
+    const inlineObj = doc.inlineObjects?.[objectId];
+    if (!inlineObj) return '';
 
-  const embedded=inlineObj.inlineObjectProperties?.embeddedObject;
-  if(!embedded?.imageProperties) return'';
+    const embedded = inlineObj.inlineObjectProperties?.embeddedObject;
+    if (!embedded?.imageProperties) return '';
 
-  const { imageProperties, size }=embedded;
-  const { contentUri, cropProperties }=imageProperties;
+    const { imageProperties, size } = embedded;
+    const { contentUri, cropProperties } = imageProperties;
 
-  let scaleX=1, scaleY=1;
-  let translateX=0, translateY=0;
-  if(embedded.transform){
-    if(embedded.transform.scaleX) scaleX=embedded.transform.scaleX;
-    if(embedded.transform.scaleY) scaleY=embedded.transform.scaleY;
-    if(embedded.transform.translateX) translateX=embedded.transform.translateX;
-    if(embedded.transform.translateY) translateY=embedded.transform.translateY;
-  }
+    if (!contentUri) {
+      console.warn(`Image ${objectId} has no content URI, skipping`);
+      return '';
+    }
 
-  const base64Data=await fetchAsBase64(contentUri,authClient);
-  const buffer=Buffer.from(base64Data,'base64');
-  const fileName=`image_${objectId}.png`;
-  const filePath=path.join(imagesDir,fileName);
-  fs.writeFileSync(filePath,buffer);
+    let scaleX = 1, scaleY = 1;
+    let translateX = 0, translateY = 0;
+    if (embedded.transform) {
+      scaleX = embedded.transform.scaleX || 1;
+      scaleY = embedded.transform.scaleY || 1;
+      translateX = embedded.transform.translateX || 0;
+      translateY = embedded.transform.translateY || 0;
+    }
 
-  const imgSrc=path.relative(outputDir,filePath);
+    const base64Data = await fetchAsBase64(contentUri, authClient);
+    if (!base64Data) {
+      console.warn(`Failed to fetch image ${objectId}`);
+      return '';
+    }
+
+    const buffer = Buffer.from(base64Data, 'base64');
+    const fileName = `image_${objectId}.png`;
+    const filePath = path.join(imagesDir, fileName);
+    fs.writeFileSync(filePath, buffer);
+
+    const imgSrc = path.relative(outputDir, filePath);
 
   let style='';
   if(size?.width?.magnitude && size?.height?.magnitude){
@@ -1048,8 +1059,12 @@ async function renderInlineObject(objectId, doc, authClient, outputDir, imagesDi
     style += `margin-right:${ptToPx(embedded.marginRight.magnitude)}px;`;
   }
 
-  const alt=embedded.title||embedded.description||'';
-  return `<img src="${escapeHtml(imgSrc)}" alt="${escapeHtml(alt)}" style="${style}" />`;
+    const alt = embedded.title || embedded.description || '';
+    return `<img src="${escapeHtml(imgSrc)}" alt="${escapeHtml(alt)}" style="${style}" />`;
+  } catch (error) {
+    console.error(`Error rendering image ${objectId}:`, error.message);
+    return `<!-- Image ${objectId} failed to render -->`;
+  }
 }
 
 // -----------------------------------------------------
@@ -1330,12 +1345,23 @@ async function getAuthClient(){
 
 /** fetchAsBase64 => fetch image content from drive with auth, return base64 */
 async function fetchAsBase64(url, authClient){
-  const resp=await authClient.request({
-    url,
-    method:'GET',
-    responseType:'arraybuffer'
-  });
-  return Buffer.from(resp.data,'binary').toString('base64');
+  try {
+    if (!url) {
+      throw new Error('No URL provided');
+    }
+    const resp = await authClient.request({
+      url,
+      method: 'GET',
+      responseType: 'arraybuffer'
+    });
+    if (!resp.data) {
+      throw new Error('No data received');
+    }
+    return Buffer.from(resp.data, 'binary').toString('base64');
+  } catch (error) {
+    console.error(`Failed to fetch image from ${url}:`, error.message);
+    return null;
+  }
 }
 
 function deepMerge(base,overlay){
@@ -1356,7 +1382,9 @@ function deepCopy(obj){
   return JSON.parse(JSON.stringify(obj));
 }
 function escapeHtml(str){
-  return str
+  if (str === null || str === undefined) return '';
+  const strValue = String(str);
+  return strValue
     .replace(/&/g,'&amp;')
     .replace(/</g,'&lt;')
     .replace(/>/g,'&gt;')
