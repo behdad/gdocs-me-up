@@ -194,6 +194,25 @@ describe('Content Verification - Reference Documents', () => {
         const totalFormatting = boldCount + italicCount + underlineCount;
         expect(totalFormatting).toBeGreaterThan(0);
       });
+
+      test('HTML output matches snapshot (regression detection)', () => {
+        // This catches ANY changes to the HTML output
+        // If this test fails, review the diff:
+        // - If change is intentional: npm test -- -u (update snapshot)
+        // - If change is a bug: fix the export code
+
+        // Normalize dynamic content that changes between runs
+        const normalizedHTML = exportedHTML
+          // Remove absolute file paths
+          .replace(/file:\/\/[^\s"]+/g, 'file://PATH')
+          // Remove timestamps if any
+          .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/g, 'TIMESTAMP')
+          // Normalize whitespace for consistent comparison
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        expect(normalizedHTML).toMatchSnapshot();
+      });
     });
   }
 });
