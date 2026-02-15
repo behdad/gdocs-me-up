@@ -510,8 +510,8 @@ async function renderParagraph(
     inlineStyle += `text-align:${alignmentMapLTR[align]};`;
   }
   if(mergedParaStyle.lineSpacing){
-    // browsers default to 1.2; empirically 1.25 matches docs
-    const ls=mergedParaStyle.lineSpacing*1.25/100;
+    // Google Docs lineSpacing is a percentage (e.g., 115 = 1.15 line spacing)
+    const ls=mergedParaStyle.lineSpacing/100;
     inlineStyle += `line-height:${ls};`;
   }
   if(mergedParaStyle.spaceAbove?.magnitude){
