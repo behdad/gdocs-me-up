@@ -761,8 +761,8 @@ async function renderInlineObject(objectId, doc, authClient, outputDir, imagesDi
   const embedded=inlineObj.inlineObjectProperties?.embeddedObject;
   if(!embedded?.imageProperties) return'';
 
-  const { imageProperties }=embedded;
-  const { contentUri, size, cropProperties }=imageProperties;
+  const { imageProperties, size }=embedded;
+  const { contentUri, cropProperties }=imageProperties;
 
   let scaleX=1, scaleY=1;
   let translateX=0, translateY=0;
