@@ -265,6 +265,64 @@ async function exportDocToHTML(docId, outputDir) {
   htmlLines.push('<body>');
   htmlLines.push('<div class="doc-content">');
 
+  // Process positioned objects (images with absolute/relative positioning)
+  if (doc.positionedObjects) {
+    for (const [objId, posObj] of Object.entries(doc.positionedObjects)) {
+      try {
+        const props = posObj.positionedObjectProperties;
+        if (!props) continue;
+
+        const embedded = props.embeddedObject;
+        if (!embedded?.imageProperties) continue;
+
+        const { contentUri } = embedded.imageProperties;
+        if (!contentUri) continue;
+
+        // Fetch and save the image
+        const base64Data = await fetchAsBase64(contentUri, authClient);
+        if (!base64Data) {
+          console.warn(`Failed to fetch positioned image ${objId}`);
+          continue;
+        }
+
+        const buffer = Buffer.from(base64Data, 'base64');
+        const fileName = `positioned_${objId}.png`;
+        const filePath = path.join(imagesDir, fileName);
+        fs.writeFileSync(filePath, buffer);
+
+        const imgSrc = path.relative(outputDir, filePath);
+
+        // Build styles based on positioning properties and size
+        let style = 'max-width:100%; height:auto;';
+
+        // Check for size information (prefer imageProperties.size, fallback to embedded.size)
+        const size = embedded.imageProperties.size || embedded.size;
+        if (size?.width?.magnitude && size?.height?.magnitude) {
+          const scaleX = embedded.transform?.scaleX || 1;
+          const scaleY = embedded.transform?.scaleY || 1;
+          const wPx = Math.round(size.width.magnitude * 1.3333 * scaleX);
+          const hPx = Math.round(size.height.magnitude * 1.3333 * scaleY);
+          style = `max-width:min(${wPx}px, 100%); height:auto;`;
+        }
+
+        // Handle different positioning layouts
+        const positioning = props.positioning;
+        if (positioning?.layout === 'WRAP_TEXT') {
+          // Wrapped images - render inline
+          style += ' display:inline-block; margin:12px;';
+        } else if (positioning?.layout === 'BREAK_BOTH' || positioning?.layout === 'BREAK_LEFT' || positioning?.layout === 'BREAK_RIGHT') {
+          // Positioned images - render as block
+          style += ' display:block; margin:12px auto;';
+        }
+
+        const alt = embedded.title || embedded.description || '';
+        htmlLines.push(`<div class="positioned-image"><img src="${escapeHtml(imgSrc)}" alt="${escapeHtml(alt)}" style="${style}" /></div>`);
+      } catch (error) {
+        console.error(`Error rendering positioned object ${objId}:`, error.message);
+      }
+    }
+  }
+
   // Pre-process: count items per list per level to determine if single-item (numbered) or multi-item (bullets)
   const listItemCounts = {};
   const bodyContent = doc.body?.content || [];
