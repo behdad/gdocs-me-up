@@ -1,0 +1,153 @@
+/**
+ * Integration Test Example
+ *
+ * This file demonstrates how integration tests could be structured.
+ * Rename to integration.test.js to enable (requires setup).
+ *
+ * Requirements:
+ * - Google Docs API credentials configured
+ * - Test document(s) with known content
+ * - Additional test utilities (cheerio for HTML parsing)
+ */
+
+const fs = require('fs');
+const path = require('path');
+const { exportDocToHTML } = require('../gdocs-me-up');
+
+describe('Document Export Integration', () => {
+  const outputDir = path.join(__dirname, 'fixtures/output');
+
+  beforeEach(() => {
+    // Clean output directory before each test
+    if (fs.existsSync(outputDir)) {
+      fs.rmSync(outputDir, { recursive: true });
+    }
+  });
+
+  afterEach(() => {
+    // Clean up after tests
+    if (fs.existsSync(outputDir)) {
+      fs.rmSync(outputDir, { recursive: true });
+    }
+  });
+
+  test('exports document with basic formatting', async () => {
+    // This test document should contain:
+    // - Title, subtitle
+    // - Paragraphs with bold, italic, underline
+    // - At least one image
+    const testDocId = 'YOUR_TEST_DOC_ID';
+
+    await exportDocToHTML(testDocId, outputDir);
+
+    const htmlPath = path.join(outputDir, 'index.html');
+    expect(fs.existsSync(htmlPath)).toBe(true);
+
+    const html = fs.readFileSync(htmlPath, 'utf8');
+
+    // Verify basic structure
+    expect(html).toContain('<!DOCTYPE html>');
+    expect(html).toContain('<html lang="en">');
+    expect(html).toContain('</html>');
+
+    // Verify content elements
+    expect(html).toContain('<h1 class="title"');
+    expect(html).toContain('class="bold"');
+    expect(html).toContain('class="italic"');
+  }, 30000); // 30s timeout for API calls
+
+  test('exports document with lists', async () => {
+    const testDocId = 'YOUR_TEST_DOC_WITH_LISTS_ID';
+
+    await exportDocToHTML(testDocId, outputDir);
+
+    const html = fs.readFileSync(path.join(outputDir, 'index.html'), 'utf8');
+
+    // Verify list elements
+    expect(html).toContain('<ul');
+    expect(html).toContain('<ol');
+    expect(html).toContain('<li>');
+  }, 30000);
+
+  test('exports document with images', async () => {
+    const testDocId = 'YOUR_TEST_DOC_WITH_IMAGES_ID';
+
+    await exportDocToHTML(testDocId, outputDir);
+
+    const html = fs.readFileSync(path.join(outputDir, 'index.html'), 'utf8');
+    const imagesDir = path.join(outputDir, 'images');
+
+    // Verify images were exported
+    expect(fs.existsSync(imagesDir)).toBe(true);
+    expect(html).toContain('<img');
+    expect(html).toMatch(/max-width.*height.*auto/);
+
+    // Check that image files were created
+    const imageFiles = fs.readdirSync(imagesDir);
+    expect(imageFiles.length).toBeGreaterThan(0);
+  }, 30000);
+
+  test('exports document with positioned objects', async () => {
+    const testDocId = 'YOUR_TEST_DOC_WITH_POSITIONED_OBJECTS_ID';
+
+    await exportDocToHTML(testDocId, outputDir);
+
+    const html = fs.readFileSync(path.join(outputDir, 'index.html'), 'utf8');
+
+    // Verify positioned images
+    expect(html).toContain('positioned-image');
+    expect(html).toContain('positioned_');
+  }, 30000);
+
+  test('handles document with tables', async () => {
+    const testDocId = 'YOUR_TEST_DOC_WITH_TABLES_ID';
+
+    await exportDocToHTML(testDocId, outputDir);
+
+    const html = fs.readFileSync(path.join(outputDir, 'index.html'), 'utf8');
+
+    // Verify table elements
+    expect(html).toContain('<table');
+    expect(html).toContain('<tr');
+    expect(html).toContain('<td');
+  }, 30000);
+});
+
+describe('Error Handling', () => {
+  test('handles invalid document ID gracefully', async () => {
+    await expect(
+      exportDocToHTML('invalid-doc-id', '/tmp/test-output')
+    ).rejects.toThrow();
+  });
+
+  test('handles missing credentials gracefully', async () => {
+    // This would test behavior when credentials are not configured
+    // Implementation depends on how you want to handle this case
+  });
+});
+
+describe('HTML Output Validation', () => {
+  test('generates valid HTML', async () => {
+    const testDocId = 'YOUR_TEST_DOC_ID';
+    const outputDir = path.join(__dirname, 'fixtures/output');
+
+    await exportDocToHTML(testDocId, outputDir);
+
+    const html = fs.readFileSync(path.join(outputDir, 'index.html'), 'utf8');
+
+    // Basic HTML validation
+    expect(html).toMatch(/<!DOCTYPE html>/i);
+    expect(html).toContain('<html');
+    expect(html).toContain('</html>');
+    expect(html).toContain('<head>');
+    expect(html).toContain('</head>');
+    expect(html).toContain('<body>');
+    expect(html).toContain('</body>');
+
+    // Verify no unclosed tags (basic check)
+    const openTags = (html.match(/<(?!\/)[\w-]+/g) || []).length;
+    const closeTags = (html.match(/<\/[\w-]+>/g) || []).length;
+    // Allow for self-closing tags
+    expect(Math.abs(openTags - closeTags)).toBeLessThan(50);
+  }, 30000);
+});
