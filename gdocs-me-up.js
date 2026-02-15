@@ -945,8 +945,8 @@ function detectListChange(bullet, doc, listStack, isRTL, prevLevel, prevListId){
       const parentType = listStack[stackIndexAfterClosing - 1]?.split(':')[0];
       const wantType = startType.toLowerCase() + (isRTL ? '_rtl' : '');
 
-      // Check if parent list type or listId changed
-      if(parentType !== wantType || (prevListId && prevListId !== listId)){
+      // Check if parent list type changed (not listId - Google Docs splits numbered lists)
+      if(parentType !== wantType){
         actions.push(`end${parentType?.toUpperCase() || 'UL'}`);
         actions.push(`start${startType}${rtlFlag}:${nestingLevel}`);
       }
@@ -955,12 +955,13 @@ function detectListChange(bullet, doc, listStack, isRTL, prevLevel, prevListId){
     return actions.join('|');
   }
 
-  // Same level - check if list type or listId changed
+  // Same level - check if list type changed
   const currentType = listStack[listStack.length - 1]?.split(':')[0];
   const wantType = startType.toLowerCase() + (isRTL ? '_rtl' : '');
 
-  // Check if list type changed OR if listId changed
-  if(currentType !== wantType || (prevListId && prevListId !== listId)){
+  // Only switch lists if the TYPE changed (OL vs UL)
+  // Don't switch just because listId changed - Google Docs splits numbered lists across listIds
+  if(currentType !== wantType){
     return `end${currentType?.toUpperCase() || 'UL'}|start${startType}${rtlFlag}:${nestingLevel}`;
   }
 
