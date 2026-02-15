@@ -10,15 +10,11 @@
     "test:visual:ui": "playwright test tests/visual/compare-smart.test.js --ui"
   },
   "dependencies": {
-    "axios": "^1.7.9",
-    "googleapis": "^144.0.0",
-    "package.json": "^0.0.0"
+    "googleapis": "^144.0.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",
     "jest": "^29.7.0",
-    "pixelmatch": "^7.1.0",
-    "playwright": "^1.58.2",
-    "pngjs": "^7.0.0"
+    "playwright": "^1.58.2"
   }
 }
