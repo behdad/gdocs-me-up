@@ -511,7 +511,8 @@ async function renderParagraph(
   }
   if(mergedParaStyle.lineSpacing){
     // Google Docs lineSpacing is a percentage (e.g., 115 = 1.15 line spacing)
-    const ls=mergedParaStyle.lineSpacing/100;
+    // Empirically 1.25 multiplier approximates Google Docs rendering
+    const ls=mergedParaStyle.lineSpacing*1.25/100;
     inlineStyle += `line-height:${ls};`;
   }
   if(mergedParaStyle.spaceAbove?.magnitude){
