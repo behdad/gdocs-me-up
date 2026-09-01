@@ -1027,13 +1027,18 @@ async function renderParagraph(
   if(!innerHtml && lineHeightMultiplier){
     const fontPoints=metricTextStyle.fontSize?.magnitude || 12;
     const lineBox=fontPoints * 1.3333 * lineHeightMultiplier;
-    const surroundingSpace=Math.max(
-      ptToPx(mergedParaStyle.spaceAbove?.magnitude || 0),
-      ptToPx(mergedParaStyle.spaceBelow?.magnitude || 0)
-    );
+    const positionedAnchorSpace=Object.keys(doc.positionedObjects || {}).length
+      ? Math.max(
+        ptToPx(mergedParaStyle.spaceAbove?.magnitude || 0),
+        ptToPx(mergedParaStyle.spaceBelow?.magnitude || 0)
+      )
+      : 0;
     // A fractional line box can otherwise round down and make every intentional
-    // blank paragraph slightly shorter than the corresponding Docs line.
-    inlineStyle += `min-height:${Math.max(0, Math.ceil(lineBox - surroundingSpace))}px;`;
+    // blank paragraph slightly shorter than the corresponding Docs line. Paragraph
+    // margins are separate spacing and must not be deducted from the blank line.
+    // Positioned-object documents use the blank paragraph's surrounding space
+    // as part of the object's anchor flow, so counting it twice shifts captions.
+    inlineStyle += `min-height:${Math.max(0, Math.ceil(lineBox - positionedAnchorSpace))}px;`;
   }
 
   paragraphClasses.push(styleRegistry.add('p', inlineStyle));
