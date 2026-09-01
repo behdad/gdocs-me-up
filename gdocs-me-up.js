@@ -46,7 +46,7 @@
  *    auth method. Requires the doc to be accessible with the given credentials.
  *
  * Usage:
- *   node google-docs-high-fidelity-export.js <DOC_ID> <OUTPUT_DIR>
+ *   node google-docs-high-fidelity-export.js <DOC_ID> <OUTPUT_DIR> [options]
  *
  * Example:
  *   node google-docs-high-fidelity-export.js 1AbCdEfgHIjKLMnOP <my-export-dir>
@@ -224,7 +224,7 @@ function isNumberedList(glyph, listId, nestingLevel, listItemCounts) {
   return false;
 }
 
-async function exportDocToHTML(docId, outputDir) {
+async function exportDocToHTML(docId, outputDir, options = {}) {
   try {
     // Validate inputs
     if (!docId || typeof docId !== 'string') {
@@ -233,10 +233,13 @@ async function exportDocToHTML(docId, outputDir) {
     if (!outputDir || typeof outputDir !== 'string') {
       throw new Error('Invalid output directory provided');
     }
+    const stylesheetLink = renderExternalStylesheetLink(options.stylesheet);
+    const htmlName = validateOutputEntryName(options.htmlName, 'index.html', 'HTML filename');
+    const imagesDirName = validateOutputEntryName(options.imagesDir, 'images', 'images directory');
 
     // Create output directories
     fs.mkdirSync(outputDir, { recursive: true });
-    const imagesDir = path.join(outputDir, 'images');
+    const imagesDir = path.join(outputDir, imagesDirName);
     fs.mkdirSync(imagesDir, { recursive: true });
 
     // Auth & fetch doc
@@ -281,6 +284,7 @@ async function exportDocToHTML(docId, outputDir) {
   htmlLines.push('/* Document-specific styles (deduplicated from the generated markup). */');
   htmlLines.push('__DOCUMENT_STYLES__');
   htmlLines.push('  </style>');
+  if (stylesheetLink) htmlLines.push(stylesheetLink);
   htmlLines.push('</head>');
   htmlLines.push('<body>');
   htmlLines.push('<div class="doc-content">');
@@ -549,8 +553,8 @@ async function exportDocToHTML(docId, outputDir) {
     }
   }
 
-    // Write index.html
-    const indexPath = path.join(outputDir, 'index.html');
+    // Write the generated HTML document.
+    const indexPath = path.join(outputDir, htmlName);
     fs.writeFileSync(indexPath, htmlLines.join('\n'), 'utf8');
     console.log(`HTML exported to: ${indexPath}`);
   } catch (error) {
@@ -1817,6 +1821,75 @@ function escapeHtml(str){
     .replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;');
 }
+
+function renderExternalStylesheetLink(stylesheet){
+  if(stylesheet === undefined || stylesheet === null) return '';
+  if(typeof stylesheet !== 'string' || !stylesheet.trim()){
+    throw new Error('Invalid stylesheet href provided');
+  }
+  return `  <link rel="stylesheet" href="${escapeHtml(stylesheet)}">`;
+}
+
+function validateOutputEntryName(value, fallback, label){
+  if(value === undefined || value === null) return fallback;
+  if(
+    typeof value !== 'string' ||
+    !value.trim() ||
+    value === '.' ||
+    value === '..' ||
+    path.basename(value) !== value
+  ){
+    throw new Error(`Invalid ${label} provided`);
+  }
+  return value;
+}
+
+function parseCliArguments(args){
+  const positional=[];
+  let stylesheet;
+  let htmlName;
+  let imagesDir;
+  let help=false;
+  for(let i=0;i<args.length;i++){
+    const argument=args[i];
+    if(argument === '--help' || argument === '-h'){
+      help=true;
+    } else if(argument === '--stylesheet'){
+      const value=args[++i];
+      if(!value || value.startsWith('--')){
+        throw new Error('--stylesheet requires an href');
+      }
+      stylesheet=value;
+    } else if(argument.startsWith('--stylesheet=')){
+      stylesheet=argument.slice('--stylesheet='.length);
+      if(!stylesheet) throw new Error('--stylesheet requires an href');
+    } else if(argument === '--html-name'){
+      htmlName=args[++i];
+      if(!htmlName || htmlName.startsWith('--')){
+        throw new Error('--html-name requires a filename');
+      }
+    } else if(argument.startsWith('--html-name=')){
+      htmlName=argument.slice('--html-name='.length);
+      if(!htmlName) throw new Error('--html-name requires a filename');
+    } else if(argument === '--images-dir'){
+      imagesDir=args[++i];
+      if(!imagesDir || imagesDir.startsWith('--')){
+        throw new Error('--images-dir requires a directory name');
+      }
+    } else if(argument.startsWith('--images-dir=')){
+      imagesDir=argument.slice('--images-dir='.length);
+      if(!imagesDir) throw new Error('--images-dir requires a directory name');
+    } else if(argument.startsWith('-')){
+      throw new Error(`Unknown option: ${argument}`);
+    } else {
+      positional.push(argument);
+    }
+  }
+  if(positional.length > 2) throw new Error(`Unexpected argument: ${positional[2]}`);
+  validateOutputEntryName(htmlName, 'index.html', 'HTML filename');
+  validateOutputEntryName(imagesDir, 'images', 'images directory');
+  return { docId: positional[0], outDir: positional[1], stylesheet, htmlName, imagesDir, help };
+}
 /**
  * Convert points to pixels (1pt ≈ 1.3333px).
  *
@@ -2010,31 +2083,44 @@ module.exports = {
   generateGlobalCSS,
   renderParagraph,
   inlineImageVerticalMarginPx,
-  buildNamedStylesMap
+  buildNamedStylesMap,
+  parseCliArguments,
+  renderExternalStylesheetLink
 };
 
 // CLI
 if(require.main===module){
-  const docId=process.argv[2];
-  const outDir=process.argv[3];
+  let cli;
+  try {
+    cli=parseCliArguments(process.argv.slice(2));
+  } catch(error){
+    console.error(`Error: ${error.message}`);
+    process.exit(1);
+  }
+  const { docId, outDir, stylesheet, htmlName, imagesDir, help }=cli;
 
   // Show help if requested
-  if (docId === '--help' || docId === '-h') {
+  if (help) {
     console.log(`
 Google Docs High-Fidelity HTML Exporter
 
 Usage:
-  node gdocs-me-up.js <DOC_ID> <OUTPUT_DIR>
+  node gdocs-me-up.js <DOC_ID> <OUTPUT_DIR> [options]
 
 Arguments:
   DOC_ID      Google Docs document ID (from the URL)
   OUTPUT_DIR  Directory where HTML and images will be exported
 
+Options:
+  --stylesheet <HREF>  Add a stylesheet link after generated styles
+  --html-name <NAME>   HTML filename (default: index.html)
+  --images-dir <NAME>  Images directory name (default: images)
+
 Example:
   node gdocs-me-up.js 1AbCdEfgHIjKLMnOP ./output
+  node gdocs-me-up.js 1AbCdEfgHIjKLMnOP ./output --stylesheet ../style.css --html-name article.html --images-dir assets
 
-The exported HTML will be saved as OUTPUT_DIR/index.html
-Images will be saved in OUTPUT_DIR/images/
+Unless renamed, HTML is saved as OUTPUT_DIR/index.html and images under OUTPUT_DIR/images/.
 
 Requirements:
   - service_account.json file with Google Docs API access
@@ -2045,12 +2131,12 @@ Requirements:
 
   if(!docId||!outDir){
     console.error('Error: Missing required arguments\n');
-    console.error('Usage: node gdocs-me-up.js <DOC_ID> <OUTPUT_DIR>');
+    console.error('Usage: node gdocs-me-up.js <DOC_ID> <OUTPUT_DIR> [options]');
     console.error('Run with --help for more information');
     process.exit(1);
   }
 
-  exportDocToHTML(docId, outDir).catch(err=>{
+  exportDocToHTML(docId, outDir, { stylesheet, htmlName, imagesDir }).catch(err=>{
     console.error('Export error:',err.message || err);
     process.exit(1);
   });

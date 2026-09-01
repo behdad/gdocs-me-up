@@ -46,7 +46,7 @@ A Node.js script that exports Google Docs to HTML+CSS with high fidelity, preser
 ## Usage
 
 ```bash
-node gdocs-me-up.js <DOC_ID> <OUTPUT_DIR>
+node gdocs-me-up.js <DOC_ID> <OUTPUT_DIR> [options]
 ```
 
 For help:
@@ -60,11 +60,23 @@ node gdocs-me-up.js --help
                 ^^^^^^^^^^^^^^^^^^^^^
   ```
 - **`<OUTPUT_DIR>`**: The folder where the script will write `index.html` and an `images/` subfolder.
+- **`--stylesheet <HREF>`**: Optionally inserts an external stylesheet after the generated styles. The href is resolved relative to the generated HTML file.
+- **`--html-name <NAME>`**: Replaces the default `index.html` filename.
+- **`--images-dir <NAME>`**: Replaces the default `images` directory name.
 
 **Example**:
 
 ```bash
 node gdocs-me-up.js 1AbCdE-FgHiJK docs_export
+```
+
+To apply a stylesheet stored next to the output directory:
+
+```bash
+node gdocs-me-up.js 1AbCdE-FgHiJK docs_export \
+  --stylesheet ../style.css \
+  --html-name article.html \
+  --images-dir assets
 ```
 
 On completion:
