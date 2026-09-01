@@ -70,6 +70,11 @@ const path = require('path');
 const { google } = require('googleapis');
 const { StyleRegistry, joinClasses } = require('./lib/styles');
 const { writeOptimizedImage } = require('./lib/images');
+const {
+  collectFontFamilies,
+  loadGoogleFontMetrics,
+  lineHeightFor
+} = require('./lib/font-metrics');
 
 // ------------- CONFIG -------------
 const SERVICE_ACCOUNT_KEY_FILE = 'service_account.json';
@@ -77,6 +82,8 @@ const SERVICE_ACCOUNT_KEY_FILE = 'service_account.json';
 // Indentation thresholds for inferring nesting levels (in points)
 const INDENT_LEVEL_0_MAX = 40;  // Items with indent <= 40pt are level 0
 const INDENT_LEVEL_1_MIN = 60;  // Items with indent >= 60pt are level 1
+// Docs uses 1.15 spacing when a paragraph style does not carry an override.
+const GOOGLE_DOCS_DEFAULT_LINE_SPACING = 115;
 
 // List glyph types
 const NUMBERED_GLYPH_TYPES = [
@@ -236,6 +243,11 @@ async function exportDocToHTML(docId, outputDir) {
     if (!doc) {
       throw new Error('Failed to fetch document from Google Docs API');
     }
+
+    Object.defineProperty(doc, '___fontMetrics', {
+      value: await loadGoogleFontMetrics(collectFontFamilies(doc)),
+      enumerable: false
+    });
 
     console.log(`Exporting doc: ${doc.title || 'Untitled'}`);
 
@@ -833,6 +845,7 @@ async function renderParagraph(
     mergedTextStyle=deepCopy(namedStylesMap[namedType].textStyle);
   }
   deepMerge(mergedParaStyle, style);
+  deepMerge(mergedTextStyle, commonRunTypography(paragraph.elements || []));
 
   // bullet logic
   const isRTL=(mergedParaStyle.direction==='RIGHT_TO_LEFT');
@@ -890,17 +903,21 @@ async function renderParagraph(
   }
   if(mergedParaStyle.lineSpacing){
     // Google Docs exposes lineSpacing as a percentage of the line box.
-    lineHeightMultiplier=docsLineHeight(baseFontFamily, mergedParaStyle.lineSpacing);
+    lineHeightMultiplier=docsLineHeight(
+      baseFontFamily,
+      mergedParaStyle.lineSpacing,
+      doc.___fontMetrics
+    );
     inlineStyle += `line-height:${lineHeightMultiplier};`;
   } else if(namedType === 'TITLE'){
-    lineHeightMultiplier=docsTitleLineHeight(baseFontFamily);
+    lineHeightMultiplier=docsTitleLineHeight(baseFontFamily, doc.___fontMetrics);
     inlineStyle += `line-height:${lineHeightMultiplier};`;
   }
   if(namedType === 'TITLE' && mergedParaStyle.lineSpacing > 100){
     const fontPixels=ptToPx(metricTextStyle.fontSize?.magnitude || 24);
     const extraLeading=Math.max(
       0,
-      lineHeightMultiplier - docsTitleLineHeight(baseFontFamily)
+      lineHeightMultiplier - docsTitleLineHeight(baseFontFamily, doc.___fontMetrics)
     );
     // CSS splits additional leading equally around glyphs. Docs titles retain
     // their normal top-side leading and place the added spacing below them.
@@ -912,16 +929,6 @@ async function renderParagraph(
   }
   if(mergedParaStyle.spaceBelow?.magnitude){
     const spaceBelowPx=ptToPx(mergedParaStyle.spaceBelow.magnitude);
-    // Docs' compact Title preset (10pt above rather than the usual 24pt)
-    // retains four pixels of bottom leading outside the title line box.
-    // A plain CSS margin loses that leading and shifts all following content.
-    if(
-      namedType === 'TITLE' &&
-      mergedParaStyle.spaceAbove?.magnitude === 10 &&
-      !(paragraph.positionedObjectIds || []).length
-    ){
-      inlineStyle += 'padding-bottom:4px;';
-    }
     inlineStyle += `margin-bottom:${spaceBelowPx}px;`;
   }
   if(!paragraph.bullet){
@@ -1015,7 +1022,8 @@ async function renderParagraph(
         mergedTextStyle,
         styleRegistry,
         mergedTextStyle,
-        mergedParaStyle.lineSpacing
+        mergedParaStyle.lineSpacing,
+        doc.___fontMetrics
       );
     } else if(r.footnoteReference){
       innerHtml += renderFootnoteReference(r.footnoteReference, doc);
@@ -1122,6 +1130,24 @@ function isSameTextStyle(a,b){
   return true;
 }
 
+function commonRunTypography(elements){
+  const runs=elements
+    .filter(element => element.textRun?.content?.replace(/\n/g, ''))
+    .map(element => element.textRun.textStyle || {});
+  if(!runs.length) return {};
+
+  const common={};
+  for(const field of ['fontSize', 'weightedFontFamily', 'bold', 'italic']){
+    if(runs.every(style => Object.prototype.hasOwnProperty.call(style, field))){
+      const value=JSON.stringify(runs[0][field]);
+      if(runs.every(style => JSON.stringify(style[field]) === value)){
+        common[field]=deepCopy(runs[0][field]);
+      }
+    }
+  }
+  return common;
+}
+
 // -----------------------------------------------------
 // Rendering text runs
 // -----------------------------------------------------
@@ -1153,7 +1179,15 @@ function inheritedTextStyleCSS(style, usedFonts){
   return css;
 }
 
-function renderTextRun(textRun, usedFonts, baseStyle, styleRegistry, inheritedStyle, paragraphLineSpacing){
+function renderTextRun(
+  textRun,
+  usedFonts,
+  baseStyle,
+  styleRegistry,
+  inheritedStyle,
+  paragraphLineSpacing,
+  fontMetrics
+){
   const finalStyle=deepCopy(baseStyle||{});
   deepMerge(finalStyle, textRun.textStyle||{});
   const inherited=inheritedStyle || {};
@@ -1186,7 +1220,7 @@ function renderTextRun(textRun, usedFonts, baseStyle, styleRegistry, inheritedSt
     // natural metrics; an inherited CSS line-height would keep the base font's
     // shorter box and pull every following paragraph upward.
     if(paragraphLineSpacing){
-      inlineStyle+=`line-height:${docsLineHeight(fam, paragraphLineSpacing)};`;
+      inlineStyle+=`line-height:${docsLineHeight(fam, paragraphLineSpacing, fontMetrics)};`;
     }
     // Font weight if specified
     if(weight && weight !== 400){
@@ -1774,22 +1808,12 @@ function inlineImageVerticalMarginPx(pts){
  * unitless line-height instead multiplies only the font size, so script fonts with
  * tall ascenders/descenders need their metric ratio restored explicitly.
  */
-function docsLineHeight(fontFamily, spacingPercent){
-  if(spacingPercent === 100) return 1;
-  if(fontFamily === 'Noto Naskh Arabic') return 1.6875 * spacingPercent / 100;
-  // Display fonts have substantially taller natural line boxes than PT Sans.
-  // Restore those metrics before applying Docs' percentage line spacing.
-  if(fontFamily === 'Anton') return 1.49565 * spacingPercent / 100;
-  if(fontFamily === 'Lalezar') return 1.41304 * spacingPercent / 100;
-  // Google Docs' Latin line box is taller than CSS `font-size`, but additional
-  // line spacing grows more slowly than a direct percentage multiplication.
-  return 1.4185 + (spacingPercent - 100) * 0.00543;
+function docsLineHeight(fontFamily, spacingPercent, fontMetrics){
+  return lineHeightFor(fontFamily, spacingPercent, fontMetrics);
 }
 
-function docsTitleLineHeight(fontFamily){
-  if(fontFamily === 'Anton') return 1.72;
-  if(fontFamily === 'Lalezar') return 1.625;
-  return 1.5;
+function docsTitleLineHeight(fontFamily, fontMetrics){
+  return lineHeightFor(fontFamily, GOOGLE_DOCS_DEFAULT_LINE_SPACING, fontMetrics);
 }
 
 /**
