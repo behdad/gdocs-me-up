@@ -966,6 +966,10 @@ async function renderParagraph(
   let dirAttr='';
   if(mergedParaStyle.direction==='RIGHT_TO_LEFT'){
     dirAttr=' dir="rtl"';
+  } else if(mergedParaStyle.direction==='LEFT_TO_RIGHT'){
+    // This must be explicit inside an RTL document; otherwise the page direction
+    // reorders neutral punctuation and makes LTR lines align from the wrong edge.
+    dirAttr=' dir="ltr"';
   }
 
   // Merge text runs
