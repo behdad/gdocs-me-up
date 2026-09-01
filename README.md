@@ -16,7 +16,7 @@ A Node.js script that exports Google Docs to HTML+CSS with high fidelity, preser
 2. **Line Spacing & Margins**: Honors `paragraphStyle.lineSpacing`, `spaceAbove`, `spaceBelow`, indentation, alignment.
 3. **Right-to-Left**: If the doc says a paragraph is RTL, we add `dir="rtl"` and flip alignment (START → right).
 4. **Tables**: GDocs tables become `<table>` with `<tr>` and `<td>`, keeping paragraph formatting in each cell.
-5. **Images**: Exports inline and positioned images (header photos, wrapped images) constrained to container width while maintaining aspect ratios. Saves images in an `images/` folder.
+5. **Images**: Exports inline and positioned images at their document dimensions. Original JPEG, GIF, WebP, SVG, and other recognized formats keep their real extension; opaque photographic PNGs become high-quality JPEGs when that saves at least 20%. Transparent PNGs remain PNG.
 6. **TOC**: If your doc has a table of contents, we export it in a `<div class="doc-toc">`, indenting each line by its heading level.
 7. **Bullet/Numbered Lists**: Detects all GDocs list styles (disc, circle, square, dash bullets; decimal, roman, alphabetic numbering) with proper nesting. RTL lists use `<ul dir="rtl">` so bullets align on the right.
 8. **Google Fonts**: Gathers unique fonts used in the doc. Inserts a `<link>` to [fonts.googleapis.com](https://fonts.googleapis.com/) so text families match.
@@ -27,8 +27,8 @@ A Node.js script that exports Google Docs to HTML+CSS with high fidelity, preser
 ## Installation
 
 1. **Prerequisites**:
-   - **Node.js** (v14 or later).
-   - `npm install googleapis`.
+   - **Node.js** (v20.9 or later).
+   - Run `npm install` to install the declared dependencies.
    - A **Google Cloud** service account JSON file with read permissions on the doc.
 
 2. **Get the Script**:
@@ -116,21 +116,29 @@ Generates side-by-side screenshots and analysis reports comparing Google Docs wi
 
 See `tests/visual/README.md` for details.
 
+To run the local visual-comparison corpus:
+
+```bash
+GDOCS_CORPUS_DIR=/path/to/fixtures npm run compare:corpus
+```
+
+The corpus runner deduplicates document IDs, captures the Google preview and local export at the same viewport, and writes screenshots, a contact sheet, and a JSON report under `tests/visual/corpus/`. Use `-- --limit=5` for a short run or `-- --names=story,butterflies` to select fixture names. Fixture files and their location are not part of the repository.
+
 ---
 
 ## Key Details
 
-1. **Line Spacing**: The script reads `paragraphStyle.lineSpacing` (e.g., 100 = 1.0, 115 = 1.15, 200 = 2.0) and sets `line-height`. It also applies `spaceAbove` + `spaceBelow` as `margin-top` + `margin-bottom`.  
+1. **Line Spacing**: The script reads `paragraphStyle.lineSpacing` and maps Google Docs' font-dependent metrics to browser line boxes. It also applies `spaceAbove` + `spaceBelow` as `margin-top` + `margin-bottom`.
 
 2. **Right-to-Left Paragraphs**: If `paragraphStyle.direction = RIGHT_TO_LEFT`, we add `dir="rtl"`. If alignment=START, it becomes `right`; alignment=END => `left`. Lists also carry `dir="rtl"` so bullets go on the right side.  
 
-3. **Images**: Supports both inline images and positioned objects (header photos, wrapped images). Images are constrained to container width with `max-width: 100%; height: auto;` to maintain aspect ratios and prevent oversized images. We read size info from both `imageProperties.size` and `embedded.size`, converting points to pixels (~1.333 ratio) and respecting `transform.scaleX/scaleY`. Positioned objects render after title/subtitle paragraphs.  
+3. **Images**: Supports both inline images and positioned objects (header photos, wrapped images). Images are constrained to container width while retaining their explicit aspect ratio. We read size info from both `imageProperties.size` and `embedded.size`, converting points to pixels (~1.333 ratio) and respecting transforms. Positioned objects render at their anchor paragraph. Opaque PNG photographs are tested against a quality-92 JPEG candidate and converted only when the candidate is at least 20% smaller.
 
 4. **TOC Indentation**: For each line in the doc’s table of contents, the script checks the heading level of the link target. It then adds a `<div class="toc-level-3">` (for example) with a margin-left rule in the CSS.  
 
-5. **Merging Identical Runs**: Google Docs often splits text into multiple runs. If two consecutive runs share the same style (bold, color, font-size, etc.), we merge them to keep the final HTML lean.  
+5. **Compact Semantic Markup**: Google Docs often splits text into many runs. Consecutive compatible runs are merged, common paragraph formatting is inherited, emphasis uses semantic tags such as `<strong>` and `<em>`, and repeated declarations are deduplicated into generated CSS classes. Exported content does not repeat inline `style` attributes.
 
-6. **Heading Size**: We override heading tags in CSS to `font-size: 1em; font-weight: normal;`. The doc sets an inline `font-size: 18pt;` (for example), so you get exactly 18pt, not 18pt multiplied by the browser’s default heading scale.  
+6. **Heading Size**: We reset browser heading defaults, then a generated class supplies the document's exact size and weight without the browser multiplying them.
 
 7. **Fonts**: If your doc uses “Roboto” and “Lato,” we add a single `<link>` to `https://fonts.googleapis.com/css2?family=Roboto&family=Lato&display=swap`, letting the final HTML use those fonts.
 
@@ -140,7 +148,6 @@ See `tests/visual/README.md` for details.
 
 - **Force a Different Column Width**: Edit `computeDocContainerWidth()` to remove the `+ 50`, or set a fixed width.  
 - **Line Spacing**: If you want a global `line-height:1.2`, remove or comment out the lines in `renderParagraph` referencing `paragraphStyle.lineSpacing`.  
-- **Images as Base64**: Set `EMBED_IMAGES_AS_BASE64 = true;`, so images are embedded inline instead of written to `images/`.  
 - **Heading Tags**: If you’d rather not use `<h1>.. <h6>`, replace them with `<p class="doc-heading-level-X">` in the code. Then style them in CSS as you like.  
 
 ---
@@ -171,7 +178,7 @@ node gdocs-me-up.js 1XYZabc docs_export
 
 **Result**:
 - `docs_export/index.html`: Headings, bullet-lists, alignment, images at half-size, lines spaced as in doc, etc.  
-- `docs_export/images/`: The images as `png`.  
+- `docs_export/images/`: Images in their source format, with space-saving JPEG conversion for suitable opaque PNG photographs.
 - The TOC lines are indented by heading level.
 
 Open the HTML in your browser or upload to a simple web server. Should be extremely close to the Google Doc’s layout, including RTL paragraphs and scaled images.

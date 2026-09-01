@@ -8,6 +8,7 @@ node_modules/
 tests/visual/output/
 tests/visual/analysis/
 tests/visual/screenshots/
+tests/visual/corpus/
 tests/fixtures/
 coverage/
 

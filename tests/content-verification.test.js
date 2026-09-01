@@ -183,6 +183,16 @@ describe('Content Verification - Reference Documents', () => {
         expect(exportedHTML).toContain('</body>');
       });
 
+      test('uses deduplicated classes instead of inline styles', () => {
+        expect($('[style]').length).toBe(0);
+        expect($('style').text()).toMatch(/\.p\d+\{/);
+      });
+
+      test('keeps every list item inside a list', () => {
+        const orphanItems = $('li').filter((_, element) => !$(element).parent().is('ul, ol'));
+        expect(orphanItems.length).toBe(0);
+      });
+
       test('applies formatting correctly', () => {
         const boldCount = $('.bold, strong, b').length;
         const italicCount = $('.italic, em, i').length;

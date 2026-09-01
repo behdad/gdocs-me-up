@@ -2,15 +2,20 @@
   "name": "gdocs-me-up",
   "version": "1.0.0",
   "description": "High-fidelity Google Docs to HTML exporter",
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "scripts": {
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "test:visual": "playwright test tests/visual/compare-smart.test.js",
-    "test:visual:ui": "playwright test tests/visual/compare-smart.test.js --ui"
+    "test:visual:ui": "playwright test tests/visual/compare-smart.test.js --ui",
+    "compare:corpus": "node scripts/compare-corpus.js"
   },
   "dependencies": {
-    "googleapis": "^144.0.0"
+    "googleapis": "^144.0.0",
+    "sharp": "^0.35.4"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",
