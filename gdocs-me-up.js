@@ -85,6 +85,9 @@ const INDENT_LEVEL_0_MAX = 40;  // Items with indent <= 40pt are level 0
 const INDENT_LEVEL_1_MIN = 60;  // Items with indent >= 60pt are level 1
 // Docs uses 1.15 spacing when a paragraph style does not carry an override.
 const GOOGLE_DOCS_DEFAULT_LINE_SPACING = 115;
+// Docs applies this color automatically to ordinary links. Leaving it out of
+// exported markup lets the browser or a consumer stylesheet own link theming.
+const GOOGLE_DOCS_DEFAULT_LINK_COLOR = '#1155cc';
 
 // List glyph types
 const NUMBERED_GLYPH_TYPES = [
@@ -607,7 +610,6 @@ body {
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
 }
-a { color: inherit; text-decoration: inherit; }
 .doc-content {
   box-sizing: content-box;
   margin: 1em auto;
@@ -1245,10 +1247,18 @@ function renderTextRun(
       inlineStyle+=`font-weight:${weight};`;
     }
   }
-  if(JSON.stringify(finalStyle.foregroundColor||null)!==JSON.stringify(inherited.foregroundColor||null) && finalStyle.foregroundColor?.color?.rgbColor){
+  const foregroundDiffers=(
+    JSON.stringify(finalStyle.foregroundColor||null)!==JSON.stringify(inherited.foregroundColor||null)
+  );
+  const hasDirectLinkColor=Boolean(
+    finalStyle.link && textRun.textStyle?.foregroundColor?.color?.rgbColor
+  );
+  if((foregroundDiffers || hasDirectLinkColor) && finalStyle.foregroundColor?.color?.rgbColor){
     const rgb=finalStyle.foregroundColor.color.rgbColor;
     const hex=rgbToHex(rgb.red||0, rgb.green||0, rgb.blue||0);
-    inlineStyle+=`color:${hex};`;
+    if(!(finalStyle.link && hex === GOOGLE_DOCS_DEFAULT_LINK_COLOR)){
+      inlineStyle+=`color:${hex};`;
+    }
   }
 
   // Background color support
@@ -1278,14 +1288,19 @@ function renderTextRun(
   const semanticTags=[];
   if(finalStyle.bold && !inherited.bold) semanticTags.push('strong');
   if(finalStyle.italic && !inherited.italic) semanticTags.push('em');
-  if(finalStyle.underline && !inherited.underline) semanticTags.push('u');
+  if(finalStyle.underline && !inherited.underline && !finalStyle.link) semanticTags.push('u');
   if(finalStyle.strikethrough && !inherited.strikethrough) semanticTags.push('s');
   if(finalStyle.baselineOffset==='SUPERSCRIPT') semanticTags.push('sup');
   if(finalStyle.baselineOffset==='SUBSCRIPT') semanticTags.push('sub');
 
   if(inherited.bold && !finalStyle.bold) inlineStyle+='font-weight:normal;';
   if(inherited.italic && !finalStyle.italic) inlineStyle+='font-style:normal;';
-  if((inherited.underline && !finalStyle.underline) || (inherited.strikethrough && !finalStyle.strikethrough)){
+  if(finalStyle.link && textRun.textStyle?.underline === false){
+    inlineStyle+='text-decoration-line:none;';
+  } else if(
+    !finalStyle.link &&
+    ((inherited.underline && !finalStyle.underline) || (inherited.strikethrough && !finalStyle.strikethrough))
+  ){
     const decorations=[];
     if(finalStyle.underline) decorations.push('underline');
     if(finalStyle.strikethrough) decorations.push('line-through');
