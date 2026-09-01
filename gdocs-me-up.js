@@ -896,6 +896,17 @@ async function renderParagraph(
     lineHeightMultiplier=docsTitleLineHeight(baseFontFamily);
     inlineStyle += `line-height:${lineHeightMultiplier};`;
   }
+  if(namedType === 'TITLE' && mergedParaStyle.lineSpacing > 100){
+    const fontPixels=ptToPx(metricTextStyle.fontSize?.magnitude || 24);
+    const extraLeading=Math.max(
+      0,
+      lineHeightMultiplier - docsTitleLineHeight(baseFontFamily)
+    );
+    // CSS splits additional leading equally around glyphs. Docs titles retain
+    // their normal top-side leading and place the added spacing below them.
+    const topShift=Math.round(extraLeading * fontPixels / 2);
+    if(topShift) inlineStyle += `position:relative;top:-${topShift}px;`;
+  }
   if(mergedParaStyle.spaceAbove?.magnitude){
     inlineStyle += `margin-top:${ptToPx(mergedParaStyle.spaceAbove.magnitude)}px;`;
   }
