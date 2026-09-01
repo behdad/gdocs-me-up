@@ -606,6 +606,7 @@ img {
   display: inline-block;
   max-width: 100%;
   height: auto;
+  vertical-align: text-bottom;
 }
 sup {
   vertical-align: super;
@@ -891,6 +892,12 @@ async function renderParagraph(
   if(mergedParaStyle.spaceBelow?.magnitude){
     inlineStyle += `margin-bottom:${ptToPx(mergedParaStyle.spaceBelow.magnitude)}px;`;
   }
+  if(namedType === 'TITLE' && !mergedParaStyle.lineSpacing){
+    // Docs reserves a little more of the title font's line box than browsers do
+    // with `line-height: normal`. Keep that leading after the title rather than
+    // stretching the glyph line itself.
+    inlineStyle += 'padding-bottom:6px;';
+  }
   if(!paragraph.bullet){
     // Docs stores both values as absolute offsets from the page's start edge;
     // CSS text-indent is relative to the already-indented content box.
@@ -998,7 +1005,9 @@ async function renderParagraph(
       ptToPx(mergedParaStyle.spaceAbove?.magnitude || 0),
       ptToPx(mergedParaStyle.spaceBelow?.magnitude || 0)
     );
-    inlineStyle += `min-height:${Math.max(0, Math.round(lineBox - surroundingSpace))}px;`;
+    // A fractional line box can otherwise round down and make every intentional
+    // blank paragraph slightly shorter than the corresponding Docs line.
+    inlineStyle += `min-height:${Math.max(0, Math.ceil(lineBox - surroundingSpace))}px;`;
   }
 
   paragraphClasses.push(styleRegistry.add('p', inlineStyle));
@@ -1271,10 +1280,10 @@ async function renderInlineObject(objectId, doc, authClient, outputDir, imagesDi
 
   // Image margins from marginTop, marginBottom, marginLeft, marginRight
   if(embedded.marginTop?.magnitude){
-    style += `margin-top:${ptToPx(embedded.marginTop.magnitude)}px;`;
+    style += `margin-top:${inlineImageVerticalMarginPx(embedded.marginTop.magnitude)}px;`;
   }
   if(embedded.marginBottom?.magnitude){
-    style += `margin-bottom:${ptToPx(embedded.marginBottom.magnitude)}px;`;
+    style += `margin-bottom:${inlineImageVerticalMarginPx(embedded.marginBottom.magnitude)}px;`;
   }
   if(embedded.marginLeft?.magnitude){
     style += `margin-left:${ptToPx(embedded.marginLeft.magnitude)}px;`;
@@ -1691,6 +1700,14 @@ function ptToPx(pts){
 }
 
 /**
+ * Inline objects expose the same wrap-clearance margins as floating objects,
+ * but Docs only uses one third of that clearance in the inline line box.
+ */
+function inlineImageVerticalMarginPx(pts){
+  return Math.round(ptToPx(pts) / 3);
+}
+
+/**
  * Docs applies line-spacing percentages to each font's natural line metrics. CSS
  * unitless line-height instead multiplies only the font size, so script fonts with
  * tall ascenders/descenders need their metric ratio restored explicitly.
@@ -1862,7 +1879,8 @@ function renderRichLink(richLink){
 module.exports = {
   exportDocToHTML,
   generateGlobalCSS,
-  renderParagraph
+  renderParagraph,
+  inlineImageVerticalMarginPx
 };
 
 // CLI
