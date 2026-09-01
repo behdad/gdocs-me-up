@@ -73,6 +73,7 @@ const { writeOptimizedImage } = require('./lib/images');
 const {
   collectFontFamilies,
   loadGoogleFontMetrics,
+  naturalLineHeight,
   lineHeightFor
 } = require('./lib/font-metrics');
 
@@ -929,6 +930,21 @@ async function renderParagraph(
   }
   if(mergedParaStyle.spaceBelow?.magnitude){
     const spaceBelowPx=ptToPx(mergedParaStyle.spaceBelow.magnitude);
+    const bodySpaceAbove=namedStylesMap.NORMAL_TEXT?.paragraphStyle?.spaceAbove?.magnitude;
+    const usesBodySpacingPreset=(
+      namedType === 'TITLE' &&
+      !mergedParaStyle.lineSpacing &&
+      bodySpaceAbove !== undefined &&
+      mergedParaStyle.spaceAbove?.magnitude === bodySpaceAbove
+    );
+    if(usesBodySpacingPreset && lineHeightMultiplier){
+      const natural=naturalLineHeight(doc.___fontMetrics?.get(baseFontFamily));
+      const fontPixels=ptToPx(metricTextStyle.fontSize?.magnitude || 24);
+      const trailingLeading=Math.round(
+        Math.max(0, lineHeightMultiplier - (natural ?? lineHeightMultiplier)) * fontPixels / 2
+      );
+      if(trailingLeading) inlineStyle += `padding-bottom:${trailingLeading}px;`;
+    }
     inlineStyle += `margin-bottom:${spaceBelowPx}px;`;
   }
   if(!paragraph.bullet){
