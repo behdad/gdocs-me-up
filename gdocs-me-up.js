@@ -597,9 +597,6 @@ body {
   margin: 1em auto;
   max-width: ${containerPx}px;
   padding: 2em 1em;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
 }
 p, h1, h2, h3, h4, h5, h6 {
   white-space: pre-wrap;
@@ -644,7 +641,7 @@ hr {
 }
 
 .subtitle { display: block; }
-.positioned-image { align-self: stretch; }
+.positioned-image { width: 100%; }
 .doc-table {
   border-collapse: collapse;
   margin: 0.5em 0;
@@ -689,6 +686,10 @@ ul, ol {
 }
 li {
   margin: 0;
+}
+.doc-content li > p {
+  /* Docs list spacing belongs to the list line, not an extra block box. */
+  margin-block: 0;
 }
 ul ul, ol ol, ul ol, ol ul {
   margin: 0;
@@ -890,10 +891,18 @@ async function renderParagraph(
   if(mergedParaStyle.spaceBelow?.magnitude){
     inlineStyle += `margin-bottom:${ptToPx(mergedParaStyle.spaceBelow.magnitude)}px;`;
   }
-  if(!paragraph.bullet && mergedParaStyle.indentFirstLine?.magnitude){
-    inlineStyle += `text-indent:${ptToPx(mergedParaStyle.indentFirstLine.magnitude)}px;`;
-  } else if(!paragraph.bullet && mergedParaStyle.indentStart?.magnitude){
-    inlineStyle += `margin-inline-start:${ptToPx(mergedParaStyle.indentStart.magnitude)}px;`;
+  if(!paragraph.bullet){
+    // Docs stores both values as absolute offsets from the page's start edge;
+    // CSS text-indent is relative to the already-indented content box.
+    const startIndent=mergedParaStyle.indentStart?.magnitude || 0;
+    const firstLineIndent=mergedParaStyle.indentFirstLine?.magnitude;
+    if(startIndent){
+      inlineStyle += `margin-inline-start:${ptToPx(startIndent)}px;`;
+    }
+    if(firstLineIndent !== undefined){
+      const firstLineDelta=ptToPx(firstLineIndent - startIndent);
+      if(firstLineDelta) inlineStyle += `text-indent:${firstLineDelta}px;`;
+    }
   }
   if(!paragraph.bullet && mergedParaStyle.indentEnd?.magnitude){
     inlineStyle += `margin-inline-end:${ptToPx(mergedParaStyle.indentEnd.magnitude)}px;`;
@@ -934,7 +943,10 @@ async function renderParagraph(
   if(mergedParaStyle.avoidWidowAndOrphan){
     inlineStyle += `orphans:2;widows:2;`;
   }
-  inlineStyle += inheritedTextStyleCSS(metricTextStyle, usedFonts);
+  // Only the named paragraph style is safe to inherit across the whole block.
+  // The first run is useful for line metrics, but it may be a link or otherwise
+  // specially formatted; promoting it would leak its color/decoration to siblings.
+  inlineStyle += inheritedTextStyleCSS(mergedTextStyle, usedFonts);
 
   // Tab stops - store for potential future use
   if(mergedParaStyle.tabStops && mergedParaStyle.tabStops.length > 0){
@@ -960,7 +972,7 @@ async function renderParagraph(
       const objId=r.inlineObjectElement.inlineObjectId;
       innerHtml += await renderInlineObject(objId, doc, authClient, outputDir, imagesDir, styleRegistry);
     } else if(r.textRun){
-      innerHtml += renderTextRun(r.textRun, usedFonts, mergedTextStyle, styleRegistry, metricTextStyle);
+      innerHtml += renderTextRun(r.textRun, usedFonts, mergedTextStyle, styleRegistry, mergedTextStyle);
     } else if(r.footnoteReference){
       innerHtml += renderFootnoteReference(r.footnoteReference, doc);
     } else if(r.equation){
@@ -1846,6 +1858,12 @@ function renderRichLink(richLink){
     ? `<a href="${escapeHtml(url)}">${escapeHtml(label)}</a>`
     : escapeHtml(label);
 }
+
+module.exports = {
+  exportDocToHTML,
+  generateGlobalCSS,
+  renderParagraph
+};
 
 // CLI
 if(require.main===module){
