@@ -578,8 +578,10 @@ function computeDocContainerWidth(doc) {
     const usablePts = pageW - (leftM + rightM);
     if (usablePts > 0) containerPx = ptToPx(usablePts);
   }
-  // small tweak
-  containerPx += 64;
+  // Pageless preview widens the page-derived text area by 66 CSS pixels.
+  // This also reproduces its observed 690px column for a US Letter document
+  // with one-inch margins: 624px printable width + 66px pageless expansion.
+  containerPx += 66;
   return containerPx;
 }
 
