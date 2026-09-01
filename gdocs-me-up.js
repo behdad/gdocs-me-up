@@ -916,12 +916,12 @@ async function renderParagraph(
   }
   if(mergedParaStyle.spaceBelow?.magnitude){
     const spaceBelowPx=ptToPx(mergedParaStyle.spaceBelow.magnitude);
-    // Docs' compact Title preset and right-to-left title layout retain four
-    // pixels of bottom leading outside the title line box. A plain CSS margin
-    // loses that leading and shifts all following content.
+    // Docs' compact Title preset (10pt above rather than the usual 24pt)
+    // retains four pixels of bottom leading outside the title line box.
+    // A plain CSS margin loses that leading and shifts all following content.
     if(
       namedType === 'TITLE' &&
-      (mergedParaStyle.spaceAbove?.magnitude === 10 || isRTL) &&
+      mergedParaStyle.spaceAbove?.magnitude === 10 &&
       !(paragraph.positionedObjectIds || []).length
     ){
       inlineStyle += 'padding-bottom:4px;';
