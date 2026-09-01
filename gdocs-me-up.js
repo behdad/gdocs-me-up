@@ -890,7 +890,11 @@ async function renderParagraph(
   }
   if(mergedParaStyle.lineSpacing){
     // Google Docs exposes lineSpacing as a percentage of the line box.
-    lineHeightMultiplier=docsLineHeight(baseFontFamily, mergedParaStyle.lineSpacing);
+    // Its single-spaced Subtitle preset uses a compact 7/8 strut. This matters
+    // when the visible run is smaller than the named Subtitle paragraph mark.
+    lineHeightMultiplier=(namedType === 'SUBTITLE' && mergedParaStyle.lineSpacing === 100)
+      ? 0.875
+      : docsLineHeight(baseFontFamily, mergedParaStyle.lineSpacing);
     inlineStyle += `line-height:${lineHeightMultiplier};`;
   } else if(namedType === 'TITLE'){
     lineHeightMultiplier=docsTitleLineHeight(baseFontFamily);
