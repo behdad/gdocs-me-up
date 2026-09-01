@@ -2,13 +2,15 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
 const { chromium } = require('playwright');
 const sharp = require('sharp');
 
 const ROOT = path.resolve(__dirname, '..');
 const OUTPUT_DIR = path.join(ROOT, 'tests', 'visual', 'corpus');
 const VIEWPORT = { width: 1280, height: 720 };
+const execFileAsync = promisify(execFile);
 
 function discoverDocuments(sourceDir) {
   const byId = new Map();
@@ -70,26 +72,28 @@ async function main() {
   const limit = limitArg ? Number(limitArg.split('=')[1]) : Infinity;
   const namesArg = process.argv.find(arg => arg.startsWith('--names='));
   const selectedNames = namesArg ? new Set(namesArg.split('=')[1].split(',')) : null;
+  const concurrencyArg = process.argv.find(arg => arg.startsWith('--concurrency='));
+  const concurrency = Math.max(1, Number(concurrencyArg?.split('=')[1] || process.env.CORPUS_CONCURRENCY || 16));
   const documents = discoverDocuments(sourceDir)
     .filter(document => !selectedNames || selectedNames.has(document.name) || document.names.some(name => selectedNames.has(name)))
     .slice(0, limit);
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 
   const browser = await chromium.launch({ headless: true });
-  const googlePage = await browser.newPage({ viewport: VIEWPORT });
-  const exportPage = await browser.newPage({ viewport: VIEWPORT });
-  const report = [];
-  const contactRows = [];
+  const report = new Array(documents.length);
+  const contactRows = new Array(documents.length);
+  const workerCount = Math.min(concurrency, documents.length);
+  process.stdout.write(`Running ${documents.length} documents with ${workerCount} workers\n`);
 
-  for (const [index, document] of documents.entries()) {
+  async function processDocument(document, index, googlePage, exportPage) {
     const outputDir = path.join(OUTPUT_DIR, 'exports', document.name);
     const screenshotDir = path.join(OUTPUT_DIR, 'screenshots', document.name);
     fs.mkdirSync(screenshotDir, { recursive: true });
     process.stdout.write(`[${index + 1}/${documents.length}] ${document.name}\n`);
 
-    execFileSync(process.execPath, [path.join(ROOT, 'gdocs-me-up.js'), document.docId, outputDir], {
+    await execFileAsync(process.execPath, [path.join(ROOT, 'gdocs-me-up.js'), document.docId, outputDir], {
       cwd: ROOT,
-      stdio: 'ignore'
+      maxBuffer: 10 * 1024 * 1024
     });
 
     const googleUrl = `https://docs.google.com/document/d/${document.docId}/preview`;
@@ -117,14 +121,14 @@ async function main() {
       `<svg width="640" height="24"><rect width="640" height="24" fill="white"/>` +
       `<text x="8" y="17" font-family="sans-serif" font-size="14">${escapeXml(document.name)} — ${(difference * 100).toFixed(1)}% pixel difference</text></svg>`
     );
-    contactRows.push(await sharp({
+    contactRows[index] = await sharp({
       create: { width: 640, height: 204, channels: 3, background: 'white' }
-    }).composite([{ input: label, top: 0, left: 0 }, { input: thumbnail, top: 24, left: 0 }]).png().toBuffer());
+    }).composite([{ input: label, top: 0, left: 0 }, { input: thumbnail, top: 24, left: 0 }]).png().toBuffer();
 
     const imageFiles = fs.existsSync(path.join(outputDir, 'images'))
       ? fs.readdirSync(path.join(outputDir, 'images'))
       : [];
-    report.push({
+    report[index] = {
       ...document,
       difference,
       htmlBytes: fs.statSync(htmlPath).size,
@@ -135,8 +139,20 @@ async function main() {
         return formats;
       }, {}),
       ...metrics
-    });
+    };
   }
+
+  await Promise.all(Array.from({ length: workerCount }, async (_, workerIndex) => {
+    const googlePage = await browser.newPage({ viewport: VIEWPORT });
+    const exportPage = await browser.newPage({ viewport: VIEWPORT });
+    try {
+      for (let index = workerIndex; index < documents.length; index += workerCount) {
+        await processDocument(documents[index], index, googlePage, exportPage);
+      }
+    } finally {
+      await Promise.all([googlePage.close(), exportPage.close()]);
+    }
+  }));
 
   await browser.close();
   fs.writeFileSync(path.join(OUTPUT_DIR, 'report.json'), JSON.stringify(report, null, 2));

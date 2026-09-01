@@ -592,6 +592,7 @@ body {
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
 }
+a { color: inherit; text-decoration: inherit; }
 .doc-content {
   box-sizing: content-box;
   margin: 1em auto;
@@ -899,7 +900,18 @@ async function renderParagraph(
     inlineStyle += `margin-top:${ptToPx(mergedParaStyle.spaceAbove.magnitude)}px;`;
   }
   if(mergedParaStyle.spaceBelow?.magnitude){
-    inlineStyle += `margin-bottom:${ptToPx(mergedParaStyle.spaceBelow.magnitude)}px;`;
+    const spaceBelowPx=ptToPx(mergedParaStyle.spaceBelow.magnitude);
+    // Docs' compact Title preset (10pt above rather than the usual 24pt)
+    // retains four pixels of bottom leading outside the title line box.
+    // A plain CSS margin loses that leading and shifts all following content.
+    if(
+      namedType === 'TITLE' &&
+      mergedParaStyle.spaceAbove?.magnitude === 10 &&
+      !(paragraph.positionedObjectIds || []).length
+    ){
+      inlineStyle += 'padding-bottom:4px;';
+    }
+    inlineStyle += `margin-bottom:${spaceBelowPx}px;`;
   }
   if(!paragraph.bullet){
     // Docs stores both values as absolute offsets from the page's start edge;
@@ -986,7 +998,14 @@ async function renderParagraph(
       const objId=r.inlineObjectElement.inlineObjectId;
       innerHtml += await renderInlineObject(objId, doc, authClient, outputDir, imagesDir, styleRegistry);
     } else if(r.textRun){
-      innerHtml += renderTextRun(r.textRun, usedFonts, mergedTextStyle, styleRegistry, mergedTextStyle);
+      innerHtml += renderTextRun(
+        r.textRun,
+        usedFonts,
+        mergedTextStyle,
+        styleRegistry,
+        mergedTextStyle,
+        mergedParaStyle.lineSpacing
+      );
     } else if(r.footnoteReference){
       innerHtml += renderFootnoteReference(r.footnoteReference, doc);
     } else if(r.equation){
@@ -1118,7 +1137,7 @@ function inheritedTextStyleCSS(style, usedFonts){
   return css;
 }
 
-function renderTextRun(textRun, usedFonts, baseStyle, styleRegistry, inheritedStyle){
+function renderTextRun(textRun, usedFonts, baseStyle, styleRegistry, inheritedStyle, paragraphLineSpacing){
   const finalStyle=deepCopy(baseStyle||{});
   deepMerge(finalStyle, textRun.textStyle||{});
   const inherited=inheritedStyle || {};
@@ -1146,6 +1165,13 @@ function renderTextRun(textRun, usedFonts, baseStyle, styleRegistry, inheritedSt
     // Track font with its weight for better loading
     usedFonts.add(`${fam}:${weight}`);
     inlineStyle+=`font-family:'${fam}',sans-serif;`;
+    // A font override can make the line box taller than the paragraph's base
+    // font. Docs applies the paragraph's spacing percentage to that font's own
+    // natural metrics; an inherited CSS line-height would keep the base font's
+    // shorter box and pull every following paragraph upward.
+    if(paragraphLineSpacing){
+      inlineStyle+=`line-height:${docsLineHeight(fam, paragraphLineSpacing)};`;
+    }
     // Font weight if specified
     if(weight && weight !== 400){
       inlineStyle+=`font-weight:${weight};`;
