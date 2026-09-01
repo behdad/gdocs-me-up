@@ -609,11 +609,17 @@ img {
   vertical-align: text-bottom;
 }
 sup {
-  vertical-align: super;
+  vertical-align: baseline;
+  position: relative;
+  top: -0.4em;
+  line-height: 0;
   font-size: 0.8em;
 }
 sub {
-  vertical-align: sub;
+  vertical-align: baseline;
+  position: relative;
+  top: 0.2em;
+  line-height: 0;
   font-size: 0.8em;
 }
 .section-break {
@@ -885,18 +891,15 @@ async function renderParagraph(
     // Google Docs exposes lineSpacing as a percentage of the line box.
     lineHeightMultiplier=docsLineHeight(baseFontFamily, mergedParaStyle.lineSpacing);
     inlineStyle += `line-height:${lineHeightMultiplier};`;
+  } else if(namedType === 'TITLE'){
+    lineHeightMultiplier=docsTitleLineHeight(baseFontFamily);
+    inlineStyle += `line-height:${lineHeightMultiplier};`;
   }
   if(mergedParaStyle.spaceAbove?.magnitude){
     inlineStyle += `margin-top:${ptToPx(mergedParaStyle.spaceAbove.magnitude)}px;`;
   }
   if(mergedParaStyle.spaceBelow?.magnitude){
     inlineStyle += `margin-bottom:${ptToPx(mergedParaStyle.spaceBelow.magnitude)}px;`;
-  }
-  if(namedType === 'TITLE' && !mergedParaStyle.lineSpacing){
-    // Docs reserves a little more of the title font's line box than browsers do
-    // with `line-height: normal`. Keep that leading after the title rather than
-    // stretching the glyph line itself.
-    inlineStyle += 'padding-bottom:6px;';
   }
   if(!paragraph.bullet){
     // Docs stores both values as absolute offsets from the page's start edge;
@@ -1608,10 +1611,23 @@ async function renderTable(
 function buildNamedStylesMap(doc){
   const map={};
   const named=doc.namedStyles?.styles||[];
+  const normal=named.find(style => style.namedStyleType === 'NORMAL_TEXT');
   for(const s of named){
+    // Headings are refinements of Normal text in Docs, but Title and Subtitle
+    // have independent paragraph metrics. Inheriting a document's body line
+    // spacing into its title can produce dramatically oversized title lines.
+    const inheritsNormal=!['NORMAL_TEXT', 'TITLE', 'SUBTITLE'].includes(s.namedStyleType);
+    const paragraphStyle=!inheritsNormal
+      ? {}
+      : deepCopy(normal?.paragraphStyle || {});
+    const textStyle=!inheritsNormal
+      ? {}
+      : deepCopy(normal?.textStyle || {});
+    deepMerge(paragraphStyle, s.paragraphStyle || {});
+    deepMerge(textStyle, s.textStyle || {});
     map[s.namedStyleType]={
-      paragraphStyle:s.paragraphStyle||{},
-      textStyle:s.textStyle||{}
+      paragraphStyle,
+      textStyle
     };
   }
   return map;
@@ -1719,9 +1735,19 @@ function inlineImageVerticalMarginPx(pts){
 function docsLineHeight(fontFamily, spacingPercent){
   if(spacingPercent === 100) return 1;
   if(fontFamily === 'Noto Naskh Arabic') return 1.6875 * spacingPercent / 100;
+  // Display fonts have substantially taller natural line boxes than PT Sans.
+  // Restore those metrics before applying Docs' percentage line spacing.
+  if(fontFamily === 'Anton') return 1.49565 * spacingPercent / 100;
+  if(fontFamily === 'Lalezar') return 1.41304 * spacingPercent / 100;
   // Google Docs' Latin line box is taller than CSS `font-size`, but additional
   // line spacing grows more slowly than a direct percentage multiplication.
   return 1.4185 + (spacingPercent - 100) * 0.00543;
+}
+
+function docsTitleLineHeight(fontFamily){
+  if(fontFamily === 'Anton') return 1.72;
+  if(fontFamily === 'Lalezar') return 1.625;
+  return 1.5;
 }
 
 /**
@@ -1884,7 +1910,8 @@ module.exports = {
   exportDocToHTML,
   generateGlobalCSS,
   renderParagraph,
-  inlineImageVerticalMarginPx
+  inlineImageVerticalMarginPx,
+  buildNamedStylesMap
 };
 
 // CLI
