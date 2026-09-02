@@ -233,7 +233,8 @@ async function exportDocToHTML(docId, outputDir, options = {}) {
     if (!outputDir || typeof outputDir !== 'string') {
       throw new Error('Invalid output directory provided');
     }
-    const stylesheetLink = renderExternalStylesheetLink(options.stylesheet);
+    const stylesheetLinks = renderExternalStylesheetLinks(options.stylesheets);
+    const scriptTags = renderExternalScriptTags(options.scripts);
     const htmlName = validateOutputEntryName(options.htmlName, 'index.html', 'HTML filename');
     const imagesDirName = validateOutputEntryName(options.imagesDir, 'images', 'images directory');
 
@@ -286,7 +287,7 @@ async function exportDocToHTML(docId, outputDir, options = {}) {
   htmlLines.push('/* Document-specific styles (deduplicated from the generated markup). */');
   htmlLines.push('__DOCUMENT_STYLES__');
   htmlLines.push('  </style>');
-  if (stylesheetLink) htmlLines.push(stylesheetLink);
+  htmlLines.push(...stylesheetLinks);
   htmlLines.push('</head>');
   htmlLines.push('<body>');
   htmlLines.push('<div class="doc-content">');
@@ -547,6 +548,7 @@ async function exportDocToHTML(docId, outputDir, options = {}) {
   if (footnotesHtml) htmlLines.push(footnotesHtml);
 
   htmlLines.push('</div>');
+  htmlLines.push(...scriptTags);
   htmlLines.push('</body>');
   htmlLines.push('</html>');
 
@@ -1943,12 +1945,29 @@ function escapeHtml(str){
     .replace(/"/g,'&quot;');
 }
 
-function renderExternalStylesheetLink(stylesheet){
-  if(stylesheet === undefined || stylesheet === null) return '';
-  if(typeof stylesheet !== 'string' || !stylesheet.trim()){
-    throw new Error('Invalid stylesheet href provided');
+function normalizeResourcePaths(resources, label){
+  if(resources === undefined || resources === null) return [];
+  if(!Array.isArray(resources)){
+    throw new Error(`Invalid ${label} list provided`);
   }
-  return `  <link rel="stylesheet" href="${escapeHtml(stylesheet)}">`;
+  for(const resourcePath of resources){
+    if(typeof resourcePath !== 'string' || !resourcePath.trim()){
+      throw new Error(`Invalid ${label} provided`);
+    }
+  }
+  return resources;
+}
+
+function renderExternalStylesheetLinks(stylesheets){
+  return normalizeResourcePaths(stylesheets, 'stylesheet href').map(stylesheet =>
+    `  <link rel="stylesheet" href="${escapeHtml(stylesheet)}">`
+  );
+}
+
+function renderExternalScriptTags(scripts){
+  return normalizeResourcePaths(scripts, 'script src').map(script =>
+    `  <script src="${escapeHtml(script)}"></script>`
+  );
 }
 
 function validateOutputEntryName(value, fallback, label){
@@ -1967,7 +1986,8 @@ function validateOutputEntryName(value, fallback, label){
 
 function parseCliArguments(args){
   const positional=[];
-  let stylesheet;
+  const stylesheets=[];
+  const scripts=[];
   let htmlName;
   let imagesDir;
   let help=false;
@@ -1980,10 +2000,21 @@ function parseCliArguments(args){
       if(!value || value.startsWith('--')){
         throw new Error('--stylesheet requires an href');
       }
-      stylesheet=value;
+      stylesheets.push(value);
     } else if(argument.startsWith('--stylesheet=')){
-      stylesheet=argument.slice('--stylesheet='.length);
-      if(!stylesheet) throw new Error('--stylesheet requires an href');
+      const value=argument.slice('--stylesheet='.length);
+      if(!value) throw new Error('--stylesheet requires an href');
+      stylesheets.push(value);
+    } else if(argument === '--script'){
+      const value=args[++i];
+      if(!value || value.startsWith('--')){
+        throw new Error('--script requires a src');
+      }
+      scripts.push(value);
+    } else if(argument.startsWith('--script=')){
+      const value=argument.slice('--script='.length);
+      if(!value) throw new Error('--script requires a src');
+      scripts.push(value);
     } else if(argument === '--html-name'){
       htmlName=args[++i];
       if(!htmlName || htmlName.startsWith('--')){
@@ -2009,7 +2040,7 @@ function parseCliArguments(args){
   if(positional.length > 2) throw new Error(`Unexpected argument: ${positional[2]}`);
   validateOutputEntryName(htmlName, 'index.html', 'HTML filename');
   validateOutputEntryName(imagesDir, 'images', 'images directory');
-  return { docId: positional[0], outDir: positional[1], stylesheet, htmlName, imagesDir, help };
+  return { docId: positional[0], outDir: positional[1], stylesheets, scripts, htmlName, imagesDir, help };
 }
 /**
  * Convert points to pixels (1pt ≈ 1.3333px).
@@ -2209,7 +2240,8 @@ module.exports = {
   prepareTableOfContentsLinks,
   documentRequestParameters,
   parseCliArguments,
-  renderExternalStylesheetLink
+  renderExternalStylesheetLinks,
+  renderExternalScriptTags
 };
 
 // CLI
@@ -2221,7 +2253,7 @@ if(require.main===module){
     console.error(`Error: ${error.message}`);
     process.exit(1);
   }
-  const { docId, outDir, stylesheet, htmlName, imagesDir, help }=cli;
+  const { docId, outDir, stylesheets, scripts, htmlName, imagesDir, help }=cli;
 
   // Show help if requested
   if (help) {
@@ -2236,13 +2268,14 @@ Arguments:
   OUTPUT_DIR  Directory where HTML and images will be exported
 
 Options:
-  --stylesheet <HREF>  Add a stylesheet link after generated styles
+  --stylesheet <HREF>  Add a stylesheet after generated styles (repeatable)
+  --script <SRC>       Add a script before </body> (repeatable)
   --html-name <NAME>   HTML filename (default: index.html)
   --images-dir <NAME>  Images directory name (default: images)
 
 Example:
   node gdocs-me-up.js 1AbCdEfgHIjKLMnOP ./output
-  node gdocs-me-up.js 1AbCdEfgHIjKLMnOP ./output --stylesheet ../style.css --html-name article.html --images-dir assets
+  node gdocs-me-up.js 1AbCdEfgHIjKLMnOP ./output --stylesheet ../style.css --script ../script.js --html-name article.html --images-dir assets
 
 Unless renamed, HTML is saved as OUTPUT_DIR/index.html and images under OUTPUT_DIR/images/.
 
@@ -2260,7 +2293,7 @@ Requirements:
     process.exit(1);
   }
 
-  exportDocToHTML(docId, outDir, { stylesheet, htmlName, imagesDir }).catch(err=>{
+  exportDocToHTML(docId, outDir, { stylesheets, scripts, htmlName, imagesDir }).catch(err=>{
     console.error('Export error:',err.message || err);
     process.exit(1);
   });

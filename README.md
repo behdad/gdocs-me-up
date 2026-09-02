@@ -60,7 +60,8 @@ node gdocs-me-up.js --help
                 ^^^^^^^^^^^^^^^^^^^^^
   ```
 - **`<OUTPUT_DIR>`**: The folder where the script will write `index.html` and an `images/` subfolder.
-- **`--stylesheet <HREF>`**: Optionally inserts an external stylesheet after the generated styles. The href is resolved relative to the generated HTML file.
+- **`--stylesheet <HREF>`**: Inserts an external stylesheet after the generated styles. Repeat the option to include multiple stylesheets in argument order. Hrefs are resolved relative to the generated HTML file.
+- **`--script <SRC>`**: Inserts an external script immediately before `</body>`. Repeat the option to include multiple scripts in argument order. Sources are resolved relative to the generated HTML file.
 - **`--html-name <NAME>`**: Replaces the default `index.html` filename.
 - **`--images-dir <NAME>`**: Replaces the default `images` directory name.
 
@@ -70,11 +71,13 @@ node gdocs-me-up.js --help
 node gdocs-me-up.js 1AbCdE-FgHiJK docs_export
 ```
 
-To apply a stylesheet stored next to the output directory:
+To apply stylesheets and scripts stored next to the output directory:
 
 ```bash
 node gdocs-me-up.js 1AbCdE-FgHiJK docs_export \
   --stylesheet ../style.css \
+  --stylesheet ../theme.css \
+  --script ../script.js \
   --html-name article.html \
   --images-dir assets
 ```
