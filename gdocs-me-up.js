@@ -251,6 +251,8 @@ async function exportDocToHTML(docId, outputDir, options = {}) {
       throw new Error('Failed to fetch document from Google Docs API');
     }
 
+    prepareTableOfContentsLinks(doc);
+
     Object.defineProperty(doc, '___fontMetrics', {
       value: await loadGoogleFontMetrics(collectFontFamilies(doc)),
       enumerable: false
@@ -593,10 +595,11 @@ function computeDocContainerWidth(doc) {
     const usablePts = pageW - (leftM + rightM);
     if (usablePts > 0) containerPx = ptToPx(usablePts);
   }
-  // Pageless preview widens the page-derived text area by 66 CSS pixels.
-  // This also reproduces its observed 690px column for a US Letter document
-  // with one-inch margins: 624px printable width + 66px pageless expansion.
-  containerPx += 66;
+  // Pageless preview widens the page-derived text area by 66 CSS pixels. A
+  // paged document retains the exact printable width recorded by the API.
+  // Older fixtures predate documentMode, and preserve the established
+  // pageless behavior when the mode is unavailable.
+  if (ds?.documentFormat?.documentMode !== 'PAGES') containerPx += 66;
   return containerPx;
 }
 
@@ -605,6 +608,18 @@ function computeDocContainerWidth(doc) {
 // -----------------------------------------------------
 function generateGlobalCSS(doc, containerPx) {
   const lines = [];
+  const documentStyle = doc.documentStyle || {};
+  const isPaged = documentStyle.documentFormat?.documentMode === 'PAGES';
+  const pagePadding = isPaged
+    ? [
+      documentStyle.marginTop?.magnitude ?? 72,
+      documentStyle.marginRight?.magnitude ?? 72,
+      documentStyle.marginBottom?.magnitude ?? 72,
+      documentStyle.marginLeft?.magnitude ?? 72
+    ].map(value => `${ptToPx(value)}px`).join(' ')
+    : '2em 1em';
+  const bodyBackground = isPaged ? '#f8f9fa' : 'transparent';
+  const pageBackground = isPaged ? 'background:#fff;box-shadow:0 0 0 1px #dadce0;' : '';
   lines.push(`
 /* Google Docs styles, rather than browser defaults, control block geometry. */
 h1, h2, h3, h4, h5, h6, p, figure {
@@ -616,6 +631,7 @@ h1, h2, h3, h4, h5, h6, p, figure {
 *, *::before, *::after { box-sizing: border-box; }
 body {
   margin: 8px;
+  background: ${bodyBackground};
   font-family: sans-serif;
   /* Better font rendering for all scripts */
   -webkit-font-smoothing: antialiased;
@@ -626,7 +642,8 @@ body {
   box-sizing: content-box;
   margin: 1em auto;
   max-width: ${containerPx}px;
-  padding: 2em 1em;
+  padding: ${pagePadding};
+  ${pageBackground}
 }
 p, h1, h2, h3, h4, h5, h6 {
   white-space: pre-wrap;
@@ -666,15 +683,6 @@ hr {
   border: 0;
   border-top: 1px solid #ccc;
   margin: 1em 0;
-}
-
-.doc-toc {
-  margin: 0.5em 0;
-  padding: 0.5em;
-}
-.doc-toc p {
-  margin: 0.1em 0;
-  line-height: 1.2;
 }
 
 .subtitle { display: block; }
@@ -732,12 +740,6 @@ ul ul, ol ol, ul ol, ol ul {
   margin: 0;
 }
 
-/* TOC indentation levels */
-.toc-level-1 { margin-left: 0; }
-.toc-level-2 { margin-left: 1em; }
-.toc-level-3 { margin-left: 2em; }
-.toc-level-4 { margin-left: 3em; }
-
 /* Improved print styles */
 @media print {
   .doc-content {
@@ -786,17 +788,6 @@ async function renderTableOfContents(
   if (toc.content) {
     for (const c of toc.content) {
       if (!c.paragraph) continue;
-      let headingLevel = 1;
-      for (const elem of c.paragraph.elements||[]) {
-        const st = elem.textRun?.textStyle;
-        if (st?.link?.headingId) {
-          const lv = findHeadingLevelById(doc, st.link.headingId);
-          if (lv>headingLevel) headingLevel=lv;
-        }
-      }
-      if (headingLevel<1) headingLevel=1;
-      if (headingLevel>4) headingLevel=4;
-
       const { html:pHtml } = await renderParagraph(
         c.paragraph,
         doc,
@@ -808,7 +799,7 @@ async function renderTableOfContents(
         namedStylesMap,
         styleRegistry
       );
-      html += `<div class="toc-level-${headingLevel}">${pHtml}</div>\n`;
+      html += `${pHtml}\n`;
     }
   }
 
@@ -816,21 +807,44 @@ async function renderTableOfContents(
   return html;
 }
 
-function findHeadingLevelById(doc, headingId) {
-  const content = doc.body?.content||[];
-  for (const e of content) {
-    if (e.paragraph) {
-      const ps = e.paragraph.paragraphStyle;
-      if (ps?.headingId===headingId) {
-        const named = ps.namedStyleType||'NORMAL_TEXT';
-        if (named.startsWith('HEADING_')) {
-          const lv=parseInt(named.replace('HEADING_',''),10);
-          if(lv>=1 && lv<=6) return lv;
-        }
-      }
+function prepareTableOfContentsLinks(doc) {
+  const headingsByText = new Map();
+  for (const element of doc.body?.content || []) {
+    const paragraph = element.paragraph;
+    const namedStyle = paragraph?.paragraphStyle?.namedStyleType || '';
+    if (!namedStyle.startsWith('HEADING_')) continue;
+    const text = paragraphText(paragraph);
+    if (!text) continue;
+    const headings = headingsByText.get(text) || [];
+    headings.push({ element, paragraph });
+    headingsByText.set(text, headings);
+  }
+
+  let generatedId = 0;
+  for (const element of doc.body?.content || []) {
+    for (const tocElement of element.tableOfContents?.content || []) {
+      const paragraph = tocElement.paragraph;
+      if (!paragraph) continue;
+      const text = paragraphText(paragraph);
+      const target = headingsByText.get(text)?.shift();
+      if (!target) continue;
+      const linkRun = (paragraph.elements || []).find(item => item.textRun?.textStyle?.link);
+      if (!linkRun) continue;
+      const link = linkRun.textRun.textStyle.link;
+      if (link.url || link.bookmarkId || link.headingId) continue;
+      const headingId = `toc-${target.element.startIndex ?? ++generatedId}`;
+      target.paragraph.paragraphStyle ||= {};
+      target.paragraph.paragraphStyle.headingId = headingId;
+      link.headingId = headingId;
     }
   }
-  return 1;
+}
+
+function paragraphText(paragraph) {
+  return (paragraph.elements || [])
+    .map(element => element.textRun?.content || '')
+    .join('')
+    .trim();
 }
 
 // -----------------------------------------------------
@@ -915,6 +929,17 @@ async function renderParagraph(
   if(firstTextRun) deepMerge(metricTextStyle, firstTextRun.textRun.textStyle || {});
   const baseFontFamily=metricTextStyle.weightedFontFamily?.fontFamily;
   let lineHeightMultiplier=null;
+  const hasSoftBreak=(paragraph.elements || []).some(element =>
+    element.textRun?.content?.includes('\u000b')
+  );
+  const softBreakMetricKeys=new Set((paragraph.elements || [])
+    .filter(element => element.textRun?.content)
+    .map(element => {
+      const runStyle=deepCopy(mergedTextStyle);
+      deepMerge(runStyle, element.textRun.textStyle || {});
+      return runStyle.weightedFontFamily?.fontFamily || '';
+    }));
+  const hasMixedSoftBreakMetrics=hasSoftBreak && softBreakMetricKeys.size > 1;
   if(align && alignmentMapLTR[align]){
     inlineStyle += `text-align:${alignmentMapLTR[align]};`;
   }
@@ -930,6 +955,7 @@ async function renderParagraph(
     lineHeightMultiplier=docsTitleLineHeight(baseFontFamily, doc.___fontMetrics);
     inlineStyle += `line-height:${lineHeightMultiplier};`;
   }
+  if(hasMixedSoftBreakMetrics) inlineStyle += 'line-height:0;';
   if(namedType === 'TITLE' && mergedParaStyle.lineSpacing > 100){
     const fontPixels=ptToPx(metricTextStyle.fontSize?.magnitude || 24);
     const extraLeading=Math.max(
@@ -1043,7 +1069,9 @@ async function renderParagraph(
     return { html:'<hr>', listChange };
   }
   let innerHtml='';
-  for(const r of mergedRuns){
+  let currentSoftLineHasContent=false;
+  for(let runIndex=0;runIndex<mergedRuns.length;runIndex++){
+    const r=mergedRuns[runIndex];
     if(r.inlineObjectElement){
       const objId=r.inlineObjectElement.inlineObjectId;
       innerHtml += await renderInlineObject(objId, doc, authClient, outputDir, imagesDir, styleRegistry);
@@ -1054,9 +1082,19 @@ async function renderParagraph(
         mergedTextStyle,
         styleRegistry,
         mergedTextStyle,
-        mergedParaStyle.lineSpacing,
-        doc.___fontMetrics
+        mergedParaStyle.lineSpacing || (namedType === 'TITLE' ? GOOGLE_DOCS_DEFAULT_LINE_SPACING : null),
+        doc.___fontMetrics,
+        runIndex < mergedRuns.length - 1,
+        currentSoftLineHasContent,
+        hasMixedSoftBreakMetrics
       );
+      const runContent=(r.textRun.content || '').replace(/\n$/,'');
+      const lastSoftBreak=runContent.lastIndexOf('\u000b');
+      if(lastSoftBreak >= 0){
+        currentSoftLineHasContent=runContent.slice(lastSoftBreak + 1).length > 0;
+      } else if(runContent){
+        currentSoftLineHasContent=true;
+      }
     } else if(r.footnoteReference){
       innerHtml += renderFootnoteReference(r.footnoteReference, doc);
     } else if(r.equation){
@@ -1218,7 +1256,10 @@ function renderTextRun(
   styleRegistry,
   inheritedStyle,
   paragraphLineSpacing,
-  fontMetrics
+  fontMetrics,
+  hasFollowingRun=false,
+  hasPrecedingLineContent=false,
+  forceRunLineHeight=false
 ){
   const finalStyle=deepCopy(baseStyle||{});
   deepMerge(finalStyle, textRun.textStyle||{});
@@ -1232,6 +1273,10 @@ function renderTextRun(
   content=content.replace(/\u000b/g,'__LINEBREAK__');
 
   let inlineStyle='';
+  let hasRunLineHeight=false;
+  const fontFamilyDiffers=(
+    JSON.stringify(finalStyle.weightedFontFamily||null)!==JSON.stringify(inherited.weightedFontFamily||null)
+  );
 
   // Small caps support
   if(finalStyle.smallCaps !== inherited.smallCaps){
@@ -1241,7 +1286,7 @@ function renderTextRun(
   if(JSON.stringify(finalStyle.fontSize||null)!==JSON.stringify(inherited.fontSize||null) && finalStyle.fontSize?.magnitude){
     inlineStyle+=`font-size:${finalStyle.fontSize.magnitude}pt;`;
   }
-  if(JSON.stringify(finalStyle.weightedFontFamily||null)!==JSON.stringify(inherited.weightedFontFamily||null) && finalStyle.weightedFontFamily?.fontFamily){
+  if(fontFamilyDiffers && finalStyle.weightedFontFamily?.fontFamily){
     const fam=finalStyle.weightedFontFamily.fontFamily;
     const weight = finalStyle.weightedFontFamily.weight || 400;
     // Track font with its weight for better loading
@@ -1253,11 +1298,16 @@ function renderTextRun(
     // shorter box and pull every following paragraph upward.
     if(paragraphLineSpacing){
       inlineStyle+=`line-height:${docsLineHeight(fam, paragraphLineSpacing, fontMetrics)};`;
+      hasRunLineHeight=true;
     }
     // Font weight if specified
     if(weight && weight !== 400){
       inlineStyle+=`font-weight:${weight};`;
     }
+  }
+  if(forceRunLineHeight && paragraphLineSpacing && !hasRunLineHeight){
+    const fam=finalStyle.weightedFontFamily?.fontFamily;
+    if(fam) inlineStyle+=`line-height:${docsLineHeight(fam, paragraphLineSpacing, fontMetrics)};`;
   }
   const foregroundDiffers=(
     JSON.stringify(finalStyle.foregroundColor||null)!==JSON.stringify(inherited.foregroundColor||null)
@@ -1289,13 +1339,22 @@ function renderTextRun(
     }
   }
 
-  // Replace line break placeholder with actual <br> tags after escaping
-  let escapedContent = escapeHtml(content).replace(/__LINEBREAK__/g, '<br>');
+  const escapedFragments=escapeHtml(content).split('__LINEBREAK__');
+  // An empty fragment before a break is a real blank line and needs this
+  // run's metrics. The final empty fragment is different: when another run
+  // follows, that run should establish the new line's metrics.
+  for(let index=0;index<escapedFragments.length-1;index++){
+    if(!escapedFragments[index] && (index > 0 || !hasPrecedingLineContent)){
+      escapedFragments[index]='&#8203;';
+    }
+  }
   // A terminal <br> does not create a second line box in HTML, whereas a
-  // trailing soft break does in Google Docs. The zero-width character keeps
-  // that final blank line measurable without changing the visible content.
-  if (escapedContent.endsWith('<br>')) escapedContent += '&#8203;';
-  if (!escapedContent) return '';
+  // trailing soft break does in Google Docs. A styled zero-width character
+  // gives only that final blank line the run's own metrics.
+  if(!hasFollowingRun && escapedFragments.length > 1 && escapedFragments.at(-1) === ''){
+    escapedFragments[escapedFragments.length - 1]='&#8203;';
+  }
+  if(escapedFragments.length === 1 && !escapedFragments[0]) return '';
 
   const semanticTags=[];
   if(finalStyle.bold && !inherited.bold) semanticTags.push('strong');
@@ -1320,21 +1379,24 @@ function renderTextRun(
   }
   const textClass=styleRegistry.add('t', inlineStyle);
 
-  let html=escapedContent;
-  for(let i=semanticTags.length-1;i>=0;i--){
-    const tag=semanticTags[i];
-    const classAttr=(!linkHref && i===0 && textClass) ? ` class="${textClass}"` : '';
-    html=`<${tag}${classAttr}>${html}</${tag}>`;
-  }
+  return escapedFragments.map(fragment => {
+    if(!fragment) return '';
+    let html=fragment;
+    for(let i=semanticTags.length-1;i>=0;i--){
+      const tag=semanticTags[i];
+      const classAttr=(!linkHref && i===0 && textClass) ? ` class="${textClass}"` : '';
+      html=`<${tag}${classAttr}>${html}</${tag}>`;
+    }
 
-  if(linkHref){
-    const classAttr=textClass ? ` class="${textClass}"` : '';
-    return `<a href="${escapeHtml(linkHref)}"${classAttr}>${html}</a>`;
-  }
-  if(semanticTags.length===0 && textClass){
-    return `<span class="${textClass}">${html}</span>`;
-  }
-  return html;
+    if(linkHref){
+      const classAttr=textClass ? ` class="${textClass}"` : '';
+      return `<a href="${escapeHtml(linkHref)}"${classAttr}>${html}</a>`;
+    }
+    if(semanticTags.length===0 && textClass){
+      return `<span class="${textClass}">${html}</span>`;
+    }
+    return html;
+  }).join('<br>');
 }
 
 // -----------------------------------------------------
@@ -2101,6 +2163,8 @@ module.exports = {
   renderParagraph,
   inlineImageVerticalMarginPx,
   buildNamedStylesMap,
+  computeDocContainerWidth,
+  prepareTableOfContentsLinks,
   parseCliArguments,
   renderExternalStylesheetLink
 };

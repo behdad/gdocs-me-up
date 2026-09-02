@@ -8,12 +8,15 @@ const { chromium } = require('playwright');
 const sharp = require('sharp');
 
 const ROOT = path.resolve(__dirname, '..');
-const OUTPUT_DIR = path.join(ROOT, 'tests', 'visual', 'corpus');
+const OUTPUT_DIR = path.resolve(
+  process.env.CORPUS_OUTPUT_DIR || path.join(ROOT, 'tests', 'visual', 'corpus')
+);
 const VIEWPORT = { width: 1280, height: 720 };
 const execFileAsync = promisify(execFile);
 
 function discoverDocuments(sourceDir) {
-  const byId = new Map();
+  const annotatedById = new Map();
+  const fallbackById = new Map();
   for (const name of fs.readdirSync(sourceDir).sort()) {
     const filePath = path.join(sourceDir, name);
     let source;
@@ -23,14 +26,50 @@ function discoverDocuments(sourceDir) {
     } catch {
       continue;
     }
+    const sourceMarkers = [...source.matchAll(
+      /Source:\s*https:\/\/docs\.google\.com\/document\/d\/([\w-]+)\/preview/g
+    )];
+    if (sourceMarkers.length) {
+      for (let index = 0; index < sourceMarkers.length; index++) {
+        const match = sourceMarkers[index];
+        const end = sourceMarkers[index + 1]?.index ?? source.length;
+        const followingMarkup = source.slice(match.index + match[0].length, end);
+        for (const anchor of followingMarkup.matchAll(/<a\b[^>]*\bhref="([^"]+)"/g)) {
+          if (anchor[1].startsWith('#')) continue;
+          const candidateName = localDocumentName(sourceDir, anchor[1]);
+          if (candidateName) addDocument(annotatedById, match[1], candidateName);
+          break;
+        }
+      }
+      continue;
+    }
+
     const match = source.match(/https:\/\/docs\.google\.com\/document\/d\/([\w-]+)\/preview/);
-    if (!match) continue;
-    const docId = match[1];
-    const current = byId.get(docId) || { docId, names: [] };
-    current.names.push(name);
-    byId.set(docId, current);
+    if (match) addDocument(fallbackById, match[1], name);
   }
+  const byId = annotatedById.size ? annotatedById : fallbackById;
   return [...byId.values()].map(item => ({ ...item, name: chooseName(item.names) }));
+
+  function addDocument(destination, docId, candidateName) {
+    const name = candidateName.replace(/\.html$/, '');
+    const current = destination.get(docId) || { docId, names: [] };
+    current.names.push(name);
+    destination.set(docId, current);
+  }
+}
+
+function localDocumentName(sourceDir, href) {
+  const collection = path.basename(path.resolve(sourceDir));
+  const cleanHref = href.split(/[?#]/, 1)[0].replace(/\/$/, '');
+  if (cleanHref.startsWith('/')) {
+    const prefix = `/${collection}/`;
+    if (!cleanHref.startsWith(prefix)) return null;
+    return cleanHref.slice(prefix.length);
+  }
+  if (!cleanHref || cleanHref.startsWith('#') || cleanHref.startsWith('../') || /^[a-z][a-z\d+.-]*:/i.test(cleanHref)) {
+    return null;
+  }
+  return cleanHref;
 }
 
 function chooseName(names) {
@@ -174,7 +213,11 @@ function escapeXml(value) {
   })[character]);
 }
 
-main().catch(error => {
-  console.error(error);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { discoverDocuments, localDocumentName };
