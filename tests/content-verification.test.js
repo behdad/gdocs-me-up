@@ -223,6 +223,10 @@ describe('Content Verification - Reference Documents', () => {
 
         expect(normalizedHTML).toMatchSnapshot();
       });
+
+      test('does not emit trailing whitespace lines', () => {
+        expect(exportedHTML).not.toMatch(/[ \t]+$/m);
+      });
     });
   }
 });

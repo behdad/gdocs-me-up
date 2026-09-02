@@ -628,7 +628,9 @@ function generateGlobalCSS(doc, containerPx) {
     ].map(value => `${ptToPx(value)}px`).join(' ')
     : '2em 1em';
   const bodyBackground = isPaged ? '#f8f9fa' : 'transparent';
-  const pageBackground = isPaged ? 'background:#fff;box-shadow:0 0 0 1px #dadce0;' : '';
+  const pageBackground = isPaged
+    ? '\n  background:#fff;box-shadow:0 0 0 1px #dadce0;'
+    : '';
   lines.push(`
 /* Google Docs styles, rather than browser defaults, control block geometry. */
 h1, h2, h3, h4, h5, h6, p, figure {
@@ -651,8 +653,7 @@ body {
   box-sizing: content-box;
   margin: 1em auto;
   max-width: ${containerPx}px;
-  padding: ${pagePadding};
-  ${pageBackground}
+  padding: ${pagePadding};${pageBackground}
 }
 p, h1, h2, h3, h4, h5, h6 {
   white-space: pre-wrap;
