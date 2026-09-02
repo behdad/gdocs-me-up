@@ -245,7 +245,7 @@ async function exportDocToHTML(docId, outputDir, options = {}) {
     // Auth & fetch doc
     const authClient = await getAuthClient();
     const docs = google.docs({ version: 'v1', auth: authClient });
-    const { data: doc } = await docs.documents.get({ documentId: docId });
+    const { data: doc } = await docs.documents.get(documentRequestParameters(docId));
 
     if (!doc) {
       throw new Error('Failed to fetch document from Google Docs API');
@@ -580,6 +580,13 @@ async function exportDocToHTML(docId, outputDir, options = {}) {
     }
     throw error;
   }
+}
+
+function documentRequestParameters(documentId){
+  return {
+    documentId,
+    suggestionsViewMode:'PREVIEW_WITHOUT_SUGGESTIONS'
+  };
 }
 
 // -----------------------------------------------------
@@ -940,22 +947,32 @@ async function renderParagraph(
       return runStyle.weightedFontFamily?.fontFamily || '';
     }));
   const hasMixedSoftBreakMetrics=hasSoftBreak && softBreakMetricKeys.size > 1;
+  const hasSoftBreakSizeOverride=hasSoftBreak && (paragraph.elements || []).some(element => {
+    if(!element.textRun?.content) return false;
+    const runStyle=deepCopy(mergedTextStyle);
+    deepMerge(runStyle, element.textRun.textStyle || {});
+    return JSON.stringify(runStyle.fontSize || null) !== JSON.stringify(mergedTextStyle.fontSize || null);
+  });
+  const needsIndependentSoftBreakLines=(
+    hasMixedSoftBreakMetrics ||
+    (hasSoftBreakSizeOverride && !mergedParaStyle.lineSpacing)
+  );
   if(align && alignmentMapLTR[align]){
     inlineStyle += `text-align:${alignmentMapLTR[align]};`;
   }
   if(mergedParaStyle.lineSpacing){
     // Google Docs exposes lineSpacing as a percentage of the line box.
-    lineHeightMultiplier=docsLineHeight(
-      baseFontFamily,
-      mergedParaStyle.lineSpacing,
-      doc.___fontMetrics
-    );
+    // A blank soft line uses the raw percentage strut. Size-overridden runs
+    // below receive an absolute line height based on the paragraph font.
+    lineHeightMultiplier=(hasSoftBreakSizeOverride && !hasMixedSoftBreakMetrics)
+      ? mergedParaStyle.lineSpacing / 100
+      : docsLineHeight(baseFontFamily, mergedParaStyle.lineSpacing, doc.___fontMetrics);
     inlineStyle += `line-height:${lineHeightMultiplier};`;
   } else if(namedType === 'TITLE'){
     lineHeightMultiplier=docsTitleLineHeight(baseFontFamily, doc.___fontMetrics);
     inlineStyle += `line-height:${lineHeightMultiplier};`;
   }
-  if(hasMixedSoftBreakMetrics) inlineStyle += 'line-height:0;';
+  if(needsIndependentSoftBreakLines) inlineStyle += 'line-height:0;';
   if(namedType === 'TITLE' && mergedParaStyle.lineSpacing > 100){
     const fontPixels=ptToPx(metricTextStyle.fontSize?.magnitude || 24);
     const extraLeading=Math.max(
@@ -1082,11 +1099,16 @@ async function renderParagraph(
         mergedTextStyle,
         styleRegistry,
         mergedTextStyle,
-        mergedParaStyle.lineSpacing || (namedType === 'TITLE' ? GOOGLE_DOCS_DEFAULT_LINE_SPACING : null),
+        mergedParaStyle.lineSpacing || (
+          namedType === 'TITLE' || needsIndependentSoftBreakLines
+            ? GOOGLE_DOCS_DEFAULT_LINE_SPACING
+            : null
+        ),
         doc.___fontMetrics,
         runIndex < mergedRuns.length - 1,
         currentSoftLineHasContent,
-        hasMixedSoftBreakMetrics
+        Boolean(hasSoftBreak && mergedParaStyle.lineSpacing),
+        needsIndependentSoftBreakLines
       );
       const runContent=(r.textRun.content || '').replace(/\n$/,'');
       const lastSoftBreak=runContent.lastIndexOf('\u000b');
@@ -1259,6 +1281,7 @@ function renderTextRun(
   fontMetrics,
   hasFollowingRun=false,
   hasPrecedingLineContent=false,
+  freezeSizeOverrideLineHeight=false,
   forceRunLineHeight=false
 ){
   const finalStyle=deepCopy(baseStyle||{});
@@ -1277,13 +1300,16 @@ function renderTextRun(
   const fontFamilyDiffers=(
     JSON.stringify(finalStyle.weightedFontFamily||null)!==JSON.stringify(inherited.weightedFontFamily||null)
   );
+  const fontSizeDiffers=(
+    JSON.stringify(finalStyle.fontSize||null)!==JSON.stringify(inherited.fontSize||null)
+  );
 
   // Small caps support
   if(finalStyle.smallCaps !== inherited.smallCaps){
     inlineStyle+=`font-variant:${finalStyle.smallCaps ? 'small-caps' : 'normal'};`;
   }
 
-  if(JSON.stringify(finalStyle.fontSize||null)!==JSON.stringify(inherited.fontSize||null) && finalStyle.fontSize?.magnitude){
+  if(fontSizeDiffers && finalStyle.fontSize?.magnitude){
     inlineStyle+=`font-size:${finalStyle.fontSize.magnitude}pt;`;
   }
   if(fontFamilyDiffers && finalStyle.weightedFontFamily?.fontFamily){
@@ -1305,9 +1331,25 @@ function renderTextRun(
       inlineStyle+=`font-weight:${weight};`;
     }
   }
+  if(
+    freezeSizeOverrideLineHeight && fontSizeDiffers && !fontFamilyDiffers &&
+    paragraphLineSpacing && inherited.fontSize?.magnitude &&
+    inherited.weightedFontFamily?.fontFamily
+  ){
+    const inheritedLineHeight=docsLineHeight(
+      inherited.weightedFontFamily.fontFamily,
+      paragraphLineSpacing,
+      fontMetrics
+    );
+    inlineStyle+=`line-height:${inherited.fontSize.magnitude * inheritedLineHeight}pt;`;
+    hasRunLineHeight=true;
+  }
   if(forceRunLineHeight && paragraphLineSpacing && !hasRunLineHeight){
     const fam=finalStyle.weightedFontFamily?.fontFamily;
-    if(fam) inlineStyle+=`line-height:${docsLineHeight(fam, paragraphLineSpacing, fontMetrics)};`;
+    const lineHeight=fam
+      ? docsLineHeight(fam, paragraphLineSpacing, fontMetrics)
+      : paragraphLineSpacing / 100;
+    inlineStyle+=`line-height:${lineHeight};`;
   }
   const foregroundDiffers=(
     JSON.stringify(finalStyle.foregroundColor||null)!==JSON.stringify(inherited.foregroundColor||null)
@@ -2165,6 +2207,7 @@ module.exports = {
   buildNamedStylesMap,
   computeDocContainerWidth,
   prepareTableOfContentsLinks,
+  documentRequestParameters,
   parseCliArguments,
   renderExternalStylesheetLink
 };
