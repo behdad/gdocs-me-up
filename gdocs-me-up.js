@@ -42,8 +42,9 @@
  *    for non-Latin scripts (Arabic, Hebrew, Greek, Cyrillic, etc.).
  *  - **Merging Text Runs**: Consecutive text runs with identical styling are combined
  *    into a single <span> to avoid excessive markup.
- *  - **Service Account Auth**: Reads from `SERVICE_ACCOUNT_KEY_FILE`, or adapt to your
- *    auth method. Requires the doc to be accessible with the given credentials.
+ *  - **Service Account Auth**: Reads from `SERVICE_ACCOUNT_KEY_FILE`, falling back to
+ *    `service_account.json` beside this script. Requires the doc to be accessible with
+ *    the given credentials.
  *
  * Usage:
  *   node google-docs-high-fidelity-export.js <DOC_ID> <OUTPUT_DIR> [options]
@@ -77,8 +78,6 @@ const {
   lineHeightFor
 } = require('./lib/font-metrics');
 
-// ------------- CONFIG -------------
-const SERVICE_ACCOUNT_KEY_FILE = 'service_account.json';
 // ------------- CONSTANTS -------------
 // Indentation thresholds for inferring nesting levels (in points)
 const INDENT_LEVEL_0_MAX = 40;  // Items with indent <= 40pt are level 0
@@ -290,7 +289,7 @@ async function exportDocToHTML(docId, outputDir, options = {}) {
   htmlLines.push(...stylesheetLinks);
   htmlLines.push('</head>');
   htmlLines.push('<body>');
-  htmlLines.push('<div class="doc-content">');
+  htmlLines.push('<main class="doc-content">');
 
   // Pre-process positioned objects (fetch and prepare HTML, but don't insert yet)
   const positionedObjectsHTML = new Map();
@@ -547,7 +546,7 @@ async function exportDocToHTML(docId, outputDir, options = {}) {
   );
   if (footnotesHtml) htmlLines.push(footnotesHtml);
 
-  htmlLines.push('</div>');
+  htmlLines.push('</main>');
   htmlLines.push(...scriptTags);
   htmlLines.push('</body>');
   htmlLines.push('</html>');
@@ -1887,9 +1886,13 @@ function detectDocumentLanguage(doc){
 // -----------------------------------------------------
 // UTILS
 // -----------------------------------------------------
+function resolveServiceAccountKeyFile(env = process.env){
+  return env.SERVICE_ACCOUNT_KEY_FILE || path.join(__dirname, 'service_account.json');
+}
+
 async function getAuthClient(){
   const auth=new google.auth.GoogleAuth({
-    keyFile:SERVICE_ACCOUNT_KEY_FILE,
+    keyFile:resolveServiceAccountKeyFile(),
     scopes:[
       'https://www.googleapis.com/auth/documents.readonly',
       'https://www.googleapis.com/auth/drive.readonly'
@@ -2242,7 +2245,8 @@ module.exports = {
   documentRequestParameters,
   parseCliArguments,
   renderExternalStylesheetLinks,
-  renderExternalScriptTags
+  renderExternalScriptTags,
+  resolveServiceAccountKeyFile
 };
 
 // CLI
@@ -2281,7 +2285,8 @@ Example:
 Unless renamed, HTML is saved as OUTPUT_DIR/index.html and images under OUTPUT_DIR/images/.
 
 Requirements:
-  - service_account.json file with Google Docs API access
+  - SERVICE_ACCOUNT_KEY_FILE, or service_account.json beside this script,
+    with Google Docs API access
   - Document must be accessible by the service account
     `);
     process.exit(0);

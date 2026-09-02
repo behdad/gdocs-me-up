@@ -181,6 +181,7 @@ describe('Content Verification - Reference Documents', () => {
         expect(exportedHTML).toContain('</head>');
         expect(exportedHTML).toContain('<body>');
         expect(exportedHTML).toContain('</body>');
+        expect($('main.doc-content')).toHaveLength(1);
       });
 
       test('uses deduplicated classes instead of inline styles', () => {

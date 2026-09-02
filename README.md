@@ -33,7 +33,9 @@ A Node.js script that exports Google Docs to HTML+CSS with high fidelity, preser
 
 2. **Get the Script**:
    - Download or clone this repository.
-   - Ensure `gdocs-me-up.js` and your `service_account.json` are in the same folder (or update the path in the script).
+   - Put `service_account.json` beside `gdocs-me-up.js`, or set
+     `SERVICE_ACCOUNT_KEY_FILE` to another path. The default works regardless of
+     the directory from which the exporter is invoked.
 
 3. **Authenticate**:
    - Go to [Google Cloud Console](https://console.cloud.google.com/), enable **Docs API** + **Drive API**.
