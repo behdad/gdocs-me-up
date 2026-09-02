@@ -21,6 +21,7 @@ A Node.js script that exports Google Docs to HTML+CSS with high fidelity, preser
 7. **Bullet/Numbered Lists**: Detects all GDocs list styles (disc, circle, square, dash bullets; decimal, roman, alphabetic numbering) with proper nesting. RTL lists use `<ul dir="rtl">` so bullets align on the right.
 8. **Google Fonts**: Gathers unique fonts used in the doc. Inserts a `<link>` to [fonts.googleapis.com](https://fonts.googleapis.com/) so text families match.
 9. **Neutralized Headings**: Browsers normally inflate `<h3>`. We override heading tags (`h1..h6 { font-size: 1em }`) so Google Docs' inline style alone sets the final size.  
+10. **Semantic Main Content**: Wraps the exported document in `<main class="doc-content">` so injected navigation can remain outside the page's primary-content landmark.
 
 ---
 
