@@ -310,22 +310,30 @@ async function exportDocToHTML(docId, outputDir, options = {}) {
           continue;
         }
 
+        // Check for size information (prefer imageProperties.size, fallback to embedded.size)
+        const size = embedded.imageProperties.size || embedded.size;
+        let displayWidth, displayHeight;
+        if (size?.width?.magnitude && size?.height?.magnitude) {
+          const scaleX = embedded.transform?.scaleX || 1;
+          const scaleY = embedded.transform?.scaleY || 1;
+          displayWidth = Math.round(size.width.magnitude * 1.3333 * scaleX);
+          displayHeight = Math.round(size.height.magnitude * 1.3333 * scaleY);
+        }
+
         const buffer = Buffer.from(base64Data, 'base64');
-        const { filePath } = await writeOptimizedImage(buffer, imagesDir, `positioned_${objId}`);
+        const { filePath } = await writeOptimizedImage(
+          buffer,
+          imagesDir,
+          `positioned_${objId}`,
+          { displayWidth, displayHeight }
+        );
 
         const imgSrc = path.relative(outputDir, filePath);
 
         // Build styles based on positioning properties and size
         let style = 'max-width:100%;height:auto;display:block;';
-
-        // Check for size information (prefer imageProperties.size, fallback to embedded.size)
-        const size = embedded.imageProperties.size || embedded.size;
-        if (size?.width?.magnitude && size?.height?.magnitude) {
-          const scaleX = embedded.transform?.scaleX || 1;
-          const scaleY = embedded.transform?.scaleY || 1;
-          const wPx = Math.round(size.width.magnitude * 1.3333 * scaleX);
-          const hPx = Math.round(size.height.magnitude * 1.3333 * scaleY);
-          style += `width:${wPx}px;height:${hPx}px;`;
+        if (displayWidth && displayHeight) {
+          style += `width:${displayWidth}px;height:${displayHeight}px;`;
         }
 
         for (const [property, cssProperty] of [
@@ -1366,17 +1374,26 @@ async function renderInlineObject(objectId, doc, authClient, outputDir, imagesDi
       return '';
     }
 
+    let displayWidth, displayHeight;
+    if(size?.width?.magnitude && size?.height?.magnitude){
+      displayWidth=ptToPx(size.width.magnitude * scaleX);
+      displayHeight=ptToPx(size.height.magnitude * scaleY);
+    }
+
     const buffer = Buffer.from(base64Data, 'base64');
-    const { filePath } = await writeOptimizedImage(buffer, imagesDir, `image_${objectId}`);
+    const { filePath } = await writeOptimizedImage(
+      buffer,
+      imagesDir,
+      `image_${objectId}`,
+      { displayWidth, displayHeight }
+    );
 
     const imgSrc = path.relative(outputDir, filePath);
 
   // Always constrain images to container width and maintain aspect ratio
   let style='max-width:100%;height:auto;';
-  if(size?.width?.magnitude && size?.height?.magnitude){
-    const width=ptToPx(size.width.magnitude * scaleX);
-    const height=ptToPx(size.height.magnitude * scaleY);
-    style+=`width:${width}px;height:${height}px;`;
+  if(displayWidth && displayHeight){
+    style+=`width:${displayWidth}px;height:${displayHeight}px;`;
   }
 
   // Handle cropping - using object-fit and object-position
