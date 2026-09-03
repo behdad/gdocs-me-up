@@ -333,10 +333,7 @@ async function exportDocToHTML(docId, outputDir, options = {}) {
         const imgSrc = path.relative(outputDir, filePath);
 
         // Build styles based on positioning properties and size
-        let style = 'max-width:100%;height:auto;display:block;';
-        if (displayWidth && displayHeight) {
-          style += `width:${displayWidth}px;height:${displayHeight}px;`;
-        }
+        let style = `${responsiveImageSizeStyle(displayWidth, displayHeight)}display:block;`;
 
         for (const [property, cssProperty] of [
           ['marginTop', 'margin-top'],
@@ -1496,11 +1493,8 @@ async function renderInlineObject(objectId, doc, authClient, outputDir, imagesDi
 
     const imgSrc = path.relative(outputDir, filePath);
 
-  // Always constrain images to container width and maintain aspect ratio
-  let style='max-width:100%;height:auto;';
-  if(displayWidth && displayHeight){
-    style+=`width:${displayWidth}px;height:${displayHeight}px;`;
-  }
+  // Always constrain images to container width and maintain their document ratio.
+  let style=responsiveImageSizeStyle(displayWidth, displayHeight);
 
   // Handle cropping - using object-fit and object-position
   if(cropProperties){
@@ -1890,6 +1884,14 @@ function resolveServiceAccountKeyFile(env = process.env){
   return env.SERVICE_ACCOUNT_KEY_FILE || path.join(__dirname, 'service_account.json');
 }
 
+function responsiveImageSizeStyle(displayWidth, displayHeight){
+  let style='max-width:100%;height:auto;';
+  if(displayWidth && displayHeight){
+    style+=`width:${displayWidth}px;aspect-ratio:${displayWidth}/${displayHeight};`;
+  }
+  return style;
+}
+
 async function getAuthClient(){
   const auth=new google.auth.GoogleAuth({
     keyFile:resolveServiceAccountKeyFile(),
@@ -2246,7 +2248,8 @@ module.exports = {
   parseCliArguments,
   renderExternalStylesheetLinks,
   renderExternalScriptTags,
-  resolveServiceAccountKeyFile
+  resolveServiceAccountKeyFile,
+  responsiveImageSizeStyle
 };
 
 // CLI
