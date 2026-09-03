@@ -16,7 +16,7 @@ A Node.js script that exports Google Docs to HTML+CSS with high fidelity, preser
 2. **Line Spacing & Margins**: Honors `paragraphStyle.lineSpacing`, `spaceAbove`, `spaceBelow`, indentation, alignment.
 3. **Right-to-Left**: If the doc says a paragraph is RTL, we add `dir="rtl"` and flip alignment (START → right).
 4. **Tables**: GDocs tables become `<table>` with `<tr>` and `<td>`, keeping paragraph formatting in each cell.
-5. **Images**: Exports inline and positioned images at their document dimensions. Original JPEG, GIF, WebP, SVG, and other recognized formats keep their real extension; opaque photographic PNGs become high-quality JPEGs when that saves at least 20%. Transparent PNGs remain PNG.
+5. **Images**: Exports inline and positioned images at their document dimensions. JPEGs become high-quality WebP; opaque PNGs with photographic entropy also become WebP when that saves at least 20%. GIF, WebP, SVG, and other recognized formats keep their real extension, and transparent or graphic PNGs remain PNG.
 6. **TOC**: If your doc has a table of contents, we export it in a `<div class="doc-toc">`, indenting each line by its heading level.
 7. **Bullet/Numbered Lists**: Detects all GDocs list styles (disc, circle, square, dash bullets; decimal, roman, alphabetic numbering) with proper nesting. RTL lists use `<ul dir="rtl">` so bullets align on the right.
 8. **Google Fonts**: Gathers unique fonts used in the doc. Inserts a `<link>` to [fonts.googleapis.com](https://fonts.googleapis.com/) so text families match.
@@ -150,7 +150,7 @@ The corpus runner deduplicates document IDs, captures the Google preview and loc
 
 2. **Right-to-Left Paragraphs**: If `paragraphStyle.direction = RIGHT_TO_LEFT`, we add `dir="rtl"`. If alignment=START, it becomes `right`; alignment=END => `left`. Lists also carry `dir="rtl"` so bullets go on the right side.  
 
-3. **Images**: Supports both inline images and positioned objects (header photos, wrapped images). Images are constrained to container width while retaining their explicit aspect ratio. We read size info from both `imageProperties.size` and `embedded.size`, converting points to pixels (~1.333 ratio) and respecting transforms. Positioned objects render at their anchor paragraph. Opaque PNG photographs are tested against a quality-92 JPEG candidate and converted only when the candidate is at least 20% smaller.
+3. **Images**: Supports both inline images and positioned objects (header photos, wrapped images). Images are constrained to container width while retaining their explicit aspect ratio. We read size info from both `imageProperties.size` and `embedded.size`, converting points to pixels (~1.333 ratio) and respecting transforms. Positioned objects render at their anchor paragraph. JPEGs are encoded as quality-84 WebP. Opaque PNGs whose grayscale entropy indicates photographic content are tested against the same WebP encoding and converted only when the candidate is at least 20% smaller; graphic and transparent PNGs stay lossless.
 
 4. **TOC Indentation**: For each line in the doc’s table of contents, the script checks the heading level of the link target. It then adds a `<div class="toc-level-3">` (for example) with a margin-left rule in the CSS.  
 
@@ -196,7 +196,7 @@ node gdocs-me-up.js 1XYZabc docs_export
 
 **Result**:
 - `docs_export/index.html`: Headings, bullet-lists, alignment, images at half-size, lines spaced as in doc, etc.  
-- `docs_export/images/`: Images in their source format, with space-saving JPEG conversion for suitable opaque PNG photographs.
+- `docs_export/images/`: Images in their source format, with space-saving WebP conversion for JPEG and suitable opaque PNG photographs.
 - The TOC lines are indented by heading level.
 
 Open the HTML in your browser or upload to a simple web server. Should be extremely close to the Google Doc’s layout, including RTL paragraphs and scaled images.
