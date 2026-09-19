@@ -234,6 +234,7 @@ async function exportDocToHTML(docId, outputDir, options = {}) {
     }
     const stylesheetLinks = renderExternalStylesheetLinks(options.stylesheets);
     const scriptTags = renderExternalScriptTags(options.scripts);
+    const headFragments = readHeadFiles(options.headFiles);
     const htmlName = validateOutputEntryName(options.htmlName, 'index.html', 'HTML filename');
     const imagesDirName = validateOutputEntryName(options.imagesDir, 'images', 'images directory');
 
@@ -287,6 +288,7 @@ async function exportDocToHTML(docId, outputDir, options = {}) {
   htmlLines.push('__DOCUMENT_STYLES__');
   htmlLines.push('  </style>');
   htmlLines.push(...stylesheetLinks);
+  htmlLines.push(...renderHeadFragments(headFragments, doc.title));
   htmlLines.push('</head>');
   htmlLines.push('<body>');
   htmlLines.push('<main class="doc-content">');
@@ -1976,6 +1978,23 @@ function renderExternalScriptTags(scripts){
   );
 }
 
+function readHeadFiles(headFiles){
+  return normalizeResourcePaths(headFiles, 'head file path').map(headFile => {
+    try {
+      return fs.readFileSync(headFile, 'utf8');
+    } catch(error){
+      throw new Error(`Could not read head file "${headFile}": ${error.message}`, { cause: error });
+    }
+  });
+}
+
+function renderHeadFragments(fragments, title){
+  const escapedTitle = escapeHtml(title).replace(/'/g, '&#39;');
+  return fragments.map(fragment =>
+    fragment.replace(/{{\s*title\s*}}/g, () => escapedTitle)
+  );
+}
+
 function validateOutputEntryName(value, fallback, label){
   if(value === undefined || value === null) return fallback;
   if(
@@ -1994,6 +2013,7 @@ function parseCliArguments(args){
   const positional=[];
   const stylesheets=[];
   const scripts=[];
+  const headFiles=[];
   let htmlName;
   let imagesDir;
   let help=false;
@@ -2021,6 +2041,16 @@ function parseCliArguments(args){
       const value=argument.slice('--script='.length);
       if(!value) throw new Error('--script requires a src');
       scripts.push(value);
+    } else if(argument === '--head-file'){
+      const value=args[++i];
+      if(!value || value.startsWith('--')){
+        throw new Error('--head-file requires a file path');
+      }
+      headFiles.push(value);
+    } else if(argument.startsWith('--head-file=')){
+      const value=argument.slice('--head-file='.length);
+      if(!value) throw new Error('--head-file requires a file path');
+      headFiles.push(value);
     } else if(argument === '--html-name'){
       htmlName=args[++i];
       if(!htmlName || htmlName.startsWith('--')){
@@ -2046,7 +2076,7 @@ function parseCliArguments(args){
   if(positional.length > 2) throw new Error(`Unexpected argument: ${positional[2]}`);
   validateOutputEntryName(htmlName, 'index.html', 'HTML filename');
   validateOutputEntryName(imagesDir, 'images', 'images directory');
-  return { docId: positional[0], outDir: positional[1], stylesheets, scripts, htmlName, imagesDir, help };
+  return { docId: positional[0], outDir: positional[1], stylesheets, scripts, headFiles, htmlName, imagesDir, help };
 }
 /**
  * Convert points to pixels (1pt ≈ 1.3333px).
@@ -2261,7 +2291,7 @@ if(require.main===module){
     console.error(`Error: ${error.message}`);
     process.exit(1);
   }
-  const { docId, outDir, stylesheets, scripts, htmlName, imagesDir, help }=cli;
+  const { docId, outDir, stylesheets, scripts, headFiles, htmlName, imagesDir, help }=cli;
 
   // Show help if requested
   if (help) {
@@ -2278,6 +2308,7 @@ Arguments:
 Options:
   --stylesheet <HREF>  Add a stylesheet after generated styles (repeatable)
   --script <SRC>       Add a script before </body> (repeatable)
+  --head-file <FILE>   Insert an HTML fragment before </head> (repeatable; supports {{title}})
   --html-name <NAME>   HTML filename (default: index.html)
   --images-dir <NAME>  Images directory name (default: images)
 
@@ -2302,7 +2333,7 @@ Requirements:
     process.exit(1);
   }
 
-  exportDocToHTML(docId, outDir, { stylesheets, scripts, htmlName, imagesDir }).catch(err=>{
+  exportDocToHTML(docId, outDir, { stylesheets, scripts, headFiles, htmlName, imagesDir }).catch(err=>{
     console.error('Export error:',err.message || err);
     process.exit(1);
   });

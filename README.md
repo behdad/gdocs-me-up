@@ -65,6 +65,7 @@ node gdocs-me-up.js --help
 - **`<OUTPUT_DIR>`**: The folder where the script will write `index.html` and an `images/` subfolder.
 - **`--stylesheet <HREF>`**: Inserts an external stylesheet after the generated styles. Repeat the option to include multiple stylesheets in argument order. Hrefs are resolved relative to the generated HTML file.
 - **`--script <SRC>`**: Inserts an external script immediately before `</body>`. Repeat the option to include multiple scripts in argument order. Sources are resolved relative to the generated HTML file.
+- **`--head-file <FILE>`**: Reads a UTF-8 HTML fragment and inserts it immediately before `</head>`, after the generated styles and external stylesheets. Repeat the option to insert several files in argument order. File paths are relative to the current working directory. `{{title}}` is replaced with the Google Doc's title, escaped for HTML text or quoted attributes; the rest of the fragment is inserted unchanged. Use fragments without enclosing `<head>` tags.
 - **`--html-name <NAME>`**: Replaces the default `index.html` filename.
 - **`--images-dir <NAME>`**: Replaces the default `images` directory name.
 
@@ -90,6 +91,35 @@ On completion:
 - **`docs_export/images/`**: Downloaded images.  
 
 Open `docs_export/index.html` in your browser. You'll see headings, bullet-lists, alignment, images, and more, closely mirroring the original doc.
+
+### Shared page metadata
+
+Store shared metadata in a file such as `shared-head.html`:
+
+```html
+<meta property="og:title" content="{{title}}">
+<meta property="og:site_name" content="My writing">
+<meta property="og:type" content="article">
+<meta property="og:image" content="https://example.com/writing/preview.png">
+<meta name="twitter:card" content="summary_large_image">
+```
+
+Reuse the same file for every export:
+
+```bash
+node gdocs-me-up.js DOCUMENT_ID writing \
+  --html-name article.html \
+  --head-file shared-head.html
+```
+
+The title comes from Google Docs automatically. The shared file supplies the
+site name and preview image, so new pieces need no separate metadata entries.
+Use absolute public URLs for preview images. `{{title}}` is intended for HTML
+text and attributes, not JavaScript or CSS. Exports without `--head-file` keep
+their existing output.
+
+Programmatic callers can pass `headFiles: ['shared-head.html']` in the options
+object to `exportDocToHTML`.
 
 ---
 
