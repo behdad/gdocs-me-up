@@ -212,6 +212,8 @@ The corpus runner deduplicates document IDs, captures the Google preview and loc
 
 **Doc**: [State of Text Rendering 2024](https://docs.google.com/document/d/1UnR2zKf3Z_DDRS6vLgBkSHUeqI3IGOEhWYh7rAIvsb8/edit) by Behdad Esfahbod.
 
+[View published HTML](https://behdad.org/doc/text2024/).
+
 **Command**:
 
 ```bash
