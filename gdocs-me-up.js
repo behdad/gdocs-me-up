@@ -71,6 +71,7 @@ const path = require('path');
 const { google } = require('googleapis');
 const { StyleRegistry, joinClasses } = require('./lib/styles');
 const { writeOptimizedImage } = require('./lib/images');
+const { trackFont, buildGoogleFontsLink } = require('./lib/google-fonts');
 const {
   collectFontFamilies,
   loadGoogleFontMetrics,
@@ -1249,6 +1250,7 @@ function commonRunTypography(elements){
 // Rendering text runs
 // -----------------------------------------------------
 function inheritedTextStyleCSS(style, usedFonts){
+  trackFont(usedFonts, style);
   let css='';
   if(style.bold) css+='font-weight:bold;';
   if(style.italic) css+='font-style:italic;';
@@ -1261,7 +1263,6 @@ function inheritedTextStyleCSS(style, usedFonts){
   if(style.weightedFontFamily?.fontFamily){
     const family=style.weightedFontFamily.fontFamily;
     const weight=style.weightedFontFamily.weight || 400;
-    usedFonts.add(`${family}:${weight}`);
     css+=`font-family:'${family}',sans-serif;`;
     if(weight !== 400) css+=`font-weight:${weight};`;
   }
@@ -1292,6 +1293,9 @@ function renderTextRun(
   const finalStyle=deepCopy(baseStyle||{});
   deepMerge(finalStyle, textRun.textStyle||{});
   const inherited=inheritedStyle || {};
+  // An italic-only override still needs a font face even when its family is
+  // inherited and no font-family declaration is emitted for this run.
+  trackFont(usedFonts, finalStyle);
 
   let content=textRun.content||'';
   // Remove trailing newline (marks end of paragraph)
@@ -1320,8 +1324,6 @@ function renderTextRun(
   if(fontFamilyDiffers && finalStyle.weightedFontFamily?.fontFamily){
     const fam=finalStyle.weightedFontFamily.fontFamily;
     const weight = finalStyle.weightedFontFamily.weight || 400;
-    // Track font with its weight for better loading
-    usedFonts.add(`${fam}:${weight}`);
     inlineStyle+=`font-family:'${fam}',sans-serif;`;
     // A font override can make the line box taller than the paragraph's base
     // font. Docs applies the paragraph's spacing percentage to that font's own
@@ -2129,36 +2131,6 @@ function rgbToHex(r, g, b){
   const nb = Math.round(clamp(b) * 255);
   return '#' + [nr, ng, nb].map(x => x.toString(16).padStart(2, '0')).join('');
 }
-function buildGoogleFontsLink(fontFamilies){
-  if(!fontFamilies||fontFamilies.length===0)return'';
-  const unique=Array.from(new Set(fontFamilies));
-
-  // Group fonts by family and collect all weights
-  const fontMap = {};
-  unique.forEach(f => {
-    const parts = f.split(':');
-    const family = parts[0];
-    const weight = parts[1] || '400';
-    if(!fontMap[family]){
-      fontMap[family] = new Set();
-    }
-    fontMap[family].add(weight);
-    // Also add common weights for better rendering
-    fontMap[family].add('400');
-    fontMap[family].add('700');
-  });
-
-  // Build the families parameter with specific weights
-  const familiesParam = Object.entries(fontMap).map(([family, weights]) => {
-    const normalized = family.trim().replace(/\s+/g,'+');
-    const weightList = Array.from(weights).sort((a,b) => parseInt(a) - parseInt(b)).join(';');
-    return `${normalized}:wght@${weightList}`;
-  }).join('&family=');
-
-  // Include comprehensive unicode subsets for right-to-left and non-Latin scripts
-  return `https://fonts.googleapis.com/css2?family=${familiesParam}&display=block`;
-}
-
 function formatBorder(side, border){
   if(!border || !border.width || !border.width.magnitude) return '';
   const width = ptToPx(border.width.magnitude);
