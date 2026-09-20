@@ -2152,7 +2152,7 @@ function buildGoogleFontsLink(fontFamilies){
   }).join('&family=');
 
   // Include comprehensive unicode subsets for right-to-left and non-Latin scripts
-  return `https://fonts.googleapis.com/css2?family=${familiesParam}&display=swap`;
+  return `https://fonts.googleapis.com/css2?family=${familiesParam}&display=block`;
 }
 
 function formatBorder(side, border){
