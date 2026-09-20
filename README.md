@@ -57,8 +57,8 @@ node gdocs-me-up.js --help
 
 - **`<DOC_ID>`**: The unique ID from your doc's URL. For example:
   ```
-  https://docs.google.com/document/d/1AbCdE-FgHiJKlMnOpQRs7TuVMue/edit
-                ^^^^^^^^^^^^^^^^^^^^^
+  https://docs.google.com/document/d/1UnR2zKf3Z_DDRS6vLgBkSHUeqI3IGOEhWYh7rAIvsb8/edit
+                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   ```
 - **`<OUTPUT_DIR>`**: The folder where the script will write `index.html` and an `images/` subfolder.
 - **`--stylesheet <HREF>`**: Inserts an external stylesheet after the generated styles. Repeat the option to include multiple stylesheets in argument order. Hrefs are resolved relative to the generated HTML file.
@@ -70,13 +70,13 @@ node gdocs-me-up.js --help
 **Example**:
 
 ```bash
-node gdocs-me-up.js 1AbCdE-FgHiJK docs_export
+node gdocs-me-up.js 1UnR2zKf3Z_DDRS6vLgBkSHUeqI3IGOEhWYh7rAIvsb8 docs_export
 ```
 
 To apply stylesheets and scripts stored next to the output directory:
 
 ```bash
-node gdocs-me-up.js 1AbCdE-FgHiJK docs_export \
+node gdocs-me-up.js 1UnR2zKf3Z_DDRS6vLgBkSHUeqI3IGOEhWYh7rAIvsb8 docs_export \
   --stylesheet ../style.css \
   --stylesheet ../theme.css \
   --script ../script.js \
@@ -105,7 +105,7 @@ Store shared metadata in a file such as `shared-head.html`:
 Reuse the same file for every export:
 
 ```bash
-node gdocs-me-up.js DOCUMENT_ID writing \
+node gdocs-me-up.js 1UnR2zKf3Z_DDRS6vLgBkSHUeqI3IGOEhWYh7rAIvsb8 writing \
   --html-name article.html \
   --head-file shared-head.html
 ```
@@ -210,24 +210,20 @@ The corpus runner deduplicates document IDs, captures the Google preview and loc
 
 ## Example
 
-**Doc**: “My Example Document” with:
-- Heading 3 at 14pt
-- Right-to-left paragraphs
-- A table of contents
-- Several images scaled to 50%
+**Doc**: [State of Text Rendering 2024](https://docs.google.com/document/d/1UnR2zKf3Z_DDRS6vLgBkSHUeqI3IGOEhWYh7rAIvsb8/edit) by Behdad Esfahbod.
 
 **Command**:
 
 ```bash
-node gdocs-me-up.js 1XYZabc docs_export
+node gdocs-me-up.js 1UnR2zKf3Z_DDRS6vLgBkSHUeqI3IGOEhWYh7rAIvsb8 docs_export
 ```
 
 **Result**:
-- `docs_export/index.html`: Headings, bullet-lists, alignment, images at half-size, lines spaced as in doc, etc.  
+- `docs_export/index.html`: The exported document, preserving headings, lists, images, and paragraph formatting.
 - `docs_export/images/`: Images in their source format, with space-saving WebP conversion for JPEG and suitable opaque PNG photographs.
 - The TOC lines are indented by heading level.
 
-Open the HTML in your browser or upload to a simple web server. Should be extremely close to the Google Doc’s layout, including RTL paragraphs and scaled images.
+Open the HTML in your browser or upload it to a web server.
 
 ---
 
