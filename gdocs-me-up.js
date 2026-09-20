@@ -559,7 +559,11 @@ async function exportDocToHTML(docId, outputDir, options = {}) {
   if (fontLink) {
     const idx = htmlLines.findIndex(l => l.includes('</title>'));
     if (idx >= 0) {
-      htmlLines.splice(idx + 1, 0, `  <link rel="stylesheet" href="${fontLink}">`);
+      htmlLines.splice(idx + 1, 0,
+        '  <link rel="preconnect" href="https://fonts.googleapis.com">',
+        '  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>',
+        `  <link rel="stylesheet" href="${fontLink}">`
+      );
     }
   }
 

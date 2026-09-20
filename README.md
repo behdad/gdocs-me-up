@@ -188,7 +188,7 @@ The corpus runner deduplicates document IDs, captures the Google preview and loc
 
 6. **Heading Size**: We reset browser heading defaults, then a generated class supplies the document's exact size and weight without the browser multiplying them.
 
-7. **Fonts**: If your doc uses “Roboto” and “Lato,” we add a single `<link>` to `https://fonts.googleapis.com/css2?family=Roboto&family=Lato&display=block`, letting the final HTML use those fonts. Text waits briefly for the document fonts to load before showing a fallback font.
+7. **Fonts**: If your doc uses “Roboto” and “Lato,” we add a single stylesheet `<link>` to `https://fonts.googleapis.com/css2?family=Roboto&family=Lato&display=block`, letting the final HTML use those fonts. Preconnect links to `fonts.googleapis.com` and `fonts.gstatic.com` precede the stylesheet, with `crossorigin` on the font-file connection. These links are emitted only when the document requests Google Fonts. Text waits briefly for the document fonts to load before showing a fallback font.
 
 ---
 
