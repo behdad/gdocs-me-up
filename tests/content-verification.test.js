@@ -1,11 +1,11 @@
 /**
  * Content Verification Tests
  *
- * Uses stable reference documents as golden standards:
+ * Uses live reference documents as golden standards:
  * - Behdad's Story (1MVNNjtoejIqvJrVruFo20qfW36ydLEebj0dRN7-bZrA)
  * - State of Text Rendering 2024 (1UnR2zKf3Z_DDRS6vLgBkSHUeqI3IGOEhWYh7rAIvsb8)
  *
- * These documents won't be modified, so we can use them to verify:
+ * Review source-document edits before accepting changed snapshots. These verify:
  * - Content accuracy (text, links, images)
  * - Structure preservation (headings, lists, paragraphs)
  * - No regressions over time

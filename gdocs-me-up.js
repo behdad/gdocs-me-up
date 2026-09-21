@@ -71,6 +71,7 @@ const path = require('path');
 const { google } = require('googleapis');
 const { StyleRegistry, joinClasses } = require('./lib/styles');
 const { writeOptimizedImage } = require('./lib/images');
+const { imageCrop, cropImageStyle } = require('./lib/image-crop');
 const { trackFont, buildGoogleFontsLink } = require('./lib/google-fonts');
 const {
   collectFontFamilies,
@@ -305,7 +306,7 @@ async function exportDocToHTML(docId, outputDir, options = {}) {
         const embedded = props.embeddedObject;
         if (!embedded?.imageProperties) continue;
 
-        const { contentUri } = embedded.imageProperties;
+        const { contentUri, cropProperties } = embedded.imageProperties;
         if (!contentUri) continue;
 
         // Fetch and save the image
@@ -326,11 +327,11 @@ async function exportDocToHTML(docId, outputDir, options = {}) {
         }
 
         const buffer = Buffer.from(base64Data, 'base64');
-        const { filePath } = await writeOptimizedImage(
+        const { filePath, sourceWidth, sourceHeight } = await writeOptimizedImage(
           buffer,
           imagesDir,
           `positioned_${objId}`,
-          { displayWidth, displayHeight }
+          { displayWidth, displayHeight, maxDisplayWidth: colInfo, cropProperties }
         );
 
         const imgSrc = path.relative(outputDir, filePath);
@@ -357,7 +358,8 @@ async function exportDocToHTML(docId, outputDir, options = {}) {
         }
 
         const alt = embedded.title || embedded.description || '';
-        const imageClass = styleRegistry.add('i', style);
+        const imageHTML = renderImage(imgSrc, alt, style, cropProperties,
+          { displayWidth, displayHeight, sourceWidth, sourceHeight }, styleRegistry);
         const offset = positioning?.leftOffset?.magnitude || 0;
         const topOffset = positioning?.topOffset?.magnitude || 0;
         let wrapperStyle = '';
@@ -366,7 +368,7 @@ async function exportDocToHTML(docId, outputDir, options = {}) {
         const wrapperClass = joinClasses('positioned-image', styleRegistry.add('o', wrapperStyle));
         positionedObjectsHTML.set(
           objId,
-          `<figure class="${wrapperClass}"><img src="${escapeHtml(imgSrc)}" alt="${escapeHtml(alt)}"${imageClass ? ` class="${imageClass}"` : ''}></figure>`
+          `<figure class="${wrapperClass}">${imageHTML}</figure>`
         );
       } catch (error) {
         console.error(`Error rendering positioned object ${objId}:`, error.message);
@@ -1492,29 +1494,17 @@ async function renderInlineObject(objectId, doc, authClient, outputDir, imagesDi
     }
 
     const buffer = Buffer.from(base64Data, 'base64');
-    const { filePath } = await writeOptimizedImage(
+    const { filePath, sourceWidth, sourceHeight } = await writeOptimizedImage(
       buffer,
       imagesDir,
       `image_${objectId}`,
-      { displayWidth, displayHeight }
+      { displayWidth, displayHeight, maxDisplayWidth: computeDocContainerWidth(doc), cropProperties }
     );
 
     const imgSrc = path.relative(outputDir, filePath);
 
   // Always constrain images to container width and maintain their document ratio.
   let style=responsiveImageSizeStyle(displayWidth, displayHeight);
-
-  // Handle cropping - using object-fit and object-position
-  if(cropProperties){
-    const { offsetLeft, offsetTop, offsetRight, offsetBottom } = cropProperties;
-    if(offsetLeft || offsetTop || offsetRight || offsetBottom){
-      style += `object-fit:cover;`;
-      // Calculate the visible portion
-      const left = (offsetLeft || 0) * 100;
-      const top = (offsetTop || 0) * 100;
-      style += `object-position:${-left}% ${-top}%;`;
-    }
-  }
 
   // Handle image positioning/translation
   if(translateX !== 0 || translateY !== 0){
@@ -1538,8 +1528,8 @@ async function renderInlineObject(objectId, doc, authClient, outputDir, imagesDi
   }
 
     const alt = embedded.title || embedded.description || '';
-    const imageClass=styleRegistry.add('i', style);
-    return `<img src="${escapeHtml(imgSrc)}" alt="${escapeHtml(alt)}"${imageClass ? ` class="${imageClass}"` : ''}>`;
+    return renderImage(imgSrc, alt, style, cropProperties,
+      { displayWidth, displayHeight, sourceWidth, sourceHeight }, styleRegistry);
   } catch (error) {
     console.error(`Error rendering image ${objectId}:`, error.message);
     return `<!-- Image ${objectId} failed to render -->`;
@@ -1898,6 +1888,26 @@ function responsiveImageSizeStyle(displayWidth, displayHeight){
     style+=`width:${displayWidth}px;aspect-ratio:${displayWidth}/${displayHeight};`;
   }
   return style;
+}
+
+function renderImage(src, alt, style, cropProperties, dimensions, styleRegistry){
+  const crop = imageCrop(cropProperties);
+  if (!crop) {
+    const imageClass = styleRegistry.add('i', style);
+    return `<img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" class="${imageClass}">`;
+  }
+  if (!dimensions.displayWidth || !dimensions.displayHeight) {
+    dimensions.displayWidth = dimensions.sourceWidth * crop.width;
+    dimensions.displayHeight = dimensions.sourceHeight * crop.height;
+    style += responsiveImageSizeStyle(dimensions.displayWidth, dimensions.displayHeight);
+  }
+  // The frame, rather than object-position, represents all four crop edges.
+  // Its aspect ratio keeps the same crop as the page narrows on mobile.
+  const display = style.includes('display:block;') ? 'block' : 'inline-block';
+  const frameClass = styleRegistry.add('i', style +
+    `position:relative;overflow:hidden;display:${display};vertical-align:text-bottom;`);
+  const imageClass = styleRegistry.add('crop', cropImageStyle(crop, dimensions));
+  return `<span class="${frameClass}"><img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" class="${imageClass}"></span>`;
 }
 
 async function getAuthClient(){
